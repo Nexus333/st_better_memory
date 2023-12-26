@@ -1,11 +1,11 @@
 {
-    "display_name": "Name Displayed in SillyTavern",
+    "display_name": "FTS Memory",
     "loading_order": 9,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
-    "author": "yourNameHere",
+    "author": "Dirge",
     "version": "1.0.0",
-    "homePage": "yourUrlHere"
+    "homePage": "hhttps://github.com/Nexus333/st_keyphrase_extraction_fts"
 }
