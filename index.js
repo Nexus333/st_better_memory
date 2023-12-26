@@ -1,11 +1,11 @@
-import { getStringHash, debounce, waitUntilCondition, extractAllWords } from '../../utils.js';
-import { getContext, getApiUrl, extension_settings, loadExtensionSettings, doExtrasFetch, modules } from '../../extensions.js';
-import { animation_duration, eventSource, event_types, extension_prompt_types, generateQuietPrompt, is_send_press, saveSettingsDebounced, substituteParams } from '../../../script.js';
-import { is_group_generating, selected_group } from '../../group-chats.js';
-import { registerSlashCommand } from '../../slash-commands.js';
-import { loadMovingUIState } from '../../power-user.js';
-import { dragElement } from '../../RossAscends-mods.js';
-import { getTextTokens, tokenizers } from '../../tokenizers.js';
+import { getStringHash, debounce, waitUntilCondition, extractAllWords } from '../../../utils.js';
+import { getContext, getApiUrl, extension_settings, loadExtensionSettings, doExtrasFetch, modules } from '../../../extensions.js';
+import { animation_duration, eventSource, event_types, extension_prompt_types, generateQuietPrompt, is_send_press, saveSettingsDebounced, substituteParams } from '../../../../script.js';
+import { is_group_generating, selected_group } from '../../../group-chats.js';
+import { registerSlashCommand } from '../../../slash-commands.js';
+import { loadMovingUIState } from '../../../power-user.js';
+import { dragElement } from '../../../RossAscends-mods.js';
+import { getTextTokens, tokenizers } from '../../../tokenizers.js';
 
 // export { MODULE_NAME };
 //
@@ -14,7 +14,7 @@ import { getTextTokens, tokenizers } from '../../tokenizers.js';
 
 // Keep track of where your extension is located, name should match repo name
 const extensionName = "st_keyphrase_extraction_fts";
-const extensionFolderPath = `scripts/extensions/${extensionName}`;
+const extensionFolderPath = `scripts/extensions/thirdparty/${extensionName}`;
 const extensionSettings = extension_settings[extensionName];
 const defaultSettings = {};
 
@@ -28,8 +28,8 @@ async function loadSettings() {
     Object.assign(extension_settings[extensionName], defaultSettings);
   }
 
-  // Updating settings in the UI
-  //$("#example_setting").prop("checked", extension_settings[extensionName].example_setting).trigger("input");
+  //Updating settings in the UI
+  $("#example_setting").prop("checked", extension_settings[extensionName].example_setting).trigger("input");
 }
 
 //perform an action when message is sent.
