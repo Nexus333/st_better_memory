@@ -75,20 +75,60 @@ const summarizeBlockData = async(msgBlock) => {
             let summary_list = summary.split("\n");
             console.log("FTS EXTENSION - Chunk Summary: ", summary_list);
 
+            //check and store current result length for comparison later.
+            let result_length = result.length;
+
+            //fallback in event of failure to outline.
+            let previous_result = result;
+
             //push each of the summaries onto the result array.
             for (let summary_index = 0; summary_index < summary_list.length; summary_index++) {
                 if (!result.includes(summary_list[summary_index])) {
-                    result.push(summary_list[summary_index]);
+                    //ensure that the summary is not empty
+                    if (summary_list[summary_index].length > 2){
+                        //make sure I'm not adding instructions or contextual information.
+                        if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
+                            result.push(summary_list[summary_index]);
+                        }else{
+                            //throw away any generated outline. This is probably the LLM hallucinating. Fallback on generating data from the chunk.
+                            summary_list = []
+                            result = previous_result
+                            console.log("FTS EXTENSION - LLM hallucination detected. Falling back to chunk data.")
+                        }
+                    }
                 }
             }
 
-            // //reset the result array for the next chunk
-            // result = [];
             result = result.filter((el)=> {
                 if (el.length > 2){
                     return el;
                 }
             });
+
+            //add memories based on default chunk text if the chunk did not add any new memories.
+            if (result.length === result_length){
+                console.log("FTS EXTENSION - No new events found in chunk, summarizing previous events.");
+                //replace all punctuation to . for summarization
+                summary = msgChunks[chunk_index].replace(new RegExp("[\.\?\!]", "g"), ".").replace(new RegExp("[\;\:]", "g"), ".").replace(", and", ".").replace(new RegExp("[\"]$", "g"), "\".");
+                console.log("FTS EXTENSION - Summarizing Chunk after Failure to Outline: ", summary);
+                summary = summary.replace(new RegExp("### .*\: ", "g"), "").replace("\[.*\]", "").replace(new RegExp("^[0-9]*\. ", ""), "").replace(new RegExp("^.*\: ", ""), "").trim();
+                summary_list = summary.split(".");
+
+                for (let summary_index = 0; summary_index < summary_list.length; summary_index++) {
+                    if (!result.includes(summary_list[summary_index])) {
+                        //ensure that the summary is not empty
+                        if (summary_list[summary_index].length > 2){
+                            //ensure that the summary is not a character name or single word
+                            if(summary_list[summary_index].split(" ").length > 3) {
+                                //make sure I'm not adding instructions or contextual information.
+                                if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
+                                    result.push(summary_list[summary_index]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         result_dict[block_index.toString()+"_actions"] = result;
@@ -211,7 +251,7 @@ jQuery(async () => {
             </div>
             <div class="inline-drawer-content">
                 <div class="example-extension_block flex-container">
-                    <input id="my_button" class="menu_button" type="submit" value="Generate Summaries" />
+                    <input id="genmem_button" class="menu_button" type="submit" value="Generate Memories" />
                 </div>
 
                 <div class="example-extension_block flex-container">
@@ -227,7 +267,7 @@ jQuery(async () => {
     $("#extensions_settings").append(settingsHtml);
 
     // These are examples of listening for events
-    $("#my_button").on("click", onMessageUpdate);
+    $("#genmem_button").on("click", onMessageUpdate);
     // $("#example_setting").on("input", onExampleInput);
 
     // Load settings when starting things up (if you have any)
