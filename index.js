@@ -1,5 +1,5 @@
 import { getContext, extension_settings} from '../../../extensions.js';
-import { generateQuietPrompt, is_send_press} from '../../../../script.js';
+import { generateRaw, is_send_press, main_api } from '../../../../script.js';
 
 
 // Keep track of where your extension is located, name should match repo name
@@ -33,7 +33,7 @@ const onMessageUpdate = async() => {
     const context = getContext();
     let last_message = context.chat[context.chat.length-1].mes;
     console.log("FTS EXTENSION - Message updated: ", last_message);
-    let res = await generateQuietPrompt(prompt+last_message+"### Response:\n");
+    let res = await generateRaw(prompt+last_message+"### Response:\n", main_api, true);
     let res2 = res.split(",");
     if (res2.length ==1) {
         res2 = res2 = res.split("\n");
@@ -51,35 +51,82 @@ const onMessageUpdate = async() => {
 };
 
 const summarizeBlockData = async(msgBlock) => {
-    let msg = msgBlock[0];
+    let msg = msgBlock;
+    //console.log("FTS EXTENSION - Block to be Summarized:", msg);
     let result = [];
     let result_dict = {}
-    let summary_part = msg.split("\n");
-    for (let i = 0; i < summary_part.length; i++) {
-        console.log("FTS EXTENSION - Summarizing: ", msg)
-        let summary = await( summarizeContent(summary_part[i]));
-        summary = summary.replace("- ", "");
-        let summary_list = summary.split("\n");
-        for (let j = 0; j < summary_list.length; j++) {
-            result.push(summary_list[j]);
+    let previous_events = "";
+
+    //process each block in msgBlock
+    for(let block_index = 0; block_index < msg.length; block_index++){
+        //console.log("FTS EXTENSION - Summarizing Block: ", msg[block_index])
+        let msgChunks = await( chunkBlock(msg[block_index]));
+
+        //process each chunk of the message block
+        for(let chunk_index = 0; chunk_index < msgChunks.length; chunk_index++){
+            //skip empty chunks
+            if (msgChunks[chunk_index].length < 2){chunk_index++;}
+            //bypass any chunks that end with character name:
+            if (msgChunks[chunk_index].endsWith(": ")){chunk_index++;}
+            console.log("FTS EXTENSION - Summarizing Chunk: ", msgChunks[chunk_index]);
+            let summary = await( summarizeContent(msgChunks[chunk_index], previous_events));
+            previous_events = summary;
+            summary = summary.replace("- ", "");
+            let summary_list = summary.split("\n");
+            console.log("FTS EXTENSION - Chunk Summary: ", summary_list);
+
+            //push each of the summaries onto the result array.
+            for (let summary_index = 0; summary_index < summary_list.length; summary_index++) {
+                if (!result.includes(summary_list[summary_index])) {
+                    result.push(summary_list[summary_index]);
+                }
+            }
+
+            // //reset the result array for the next chunk
+            // result = [];
+            result = result.filter((el)=> {
+                if (el.length > 2){
+                    return el;
+                }
+            });
         }
-        result_dict[i.toString()] = result;
+
+        result_dict[block_index.toString()+"_actions"] = result;
+        let event_block = await consolidateBlockSummary(result)
+        let summary = await generateSummaryFromEvents(event_block);
+        result_dict[block_index.toString()+"_summary"] = summary;
+
+        console.log("FTS EXTENSION - Block Summarized: "+msg[block_index]+"\nBlock Summary: \n"+result_dict[block_index.toString()+"_summary"] )
+
+        //reset result and events for next block
         result = [];
-        console.log("FTS EXTENSION - Summarized: ", result_dict)
+        previous_events = summary;
     }
 }
 
-const summarizeContent = async(msg) => {
+const chunkBlock = async(msg) => {
+    //split the message provided based on paragraphs.
+    let msgArray = msg.split("\n");
+
+    //clear empty strings from the array.
+    msgArray = msgArray.filter((el)=> {
+        return el != "";
+    } );
+    return msgArray;
+}
+
+const summarizeContent = async(msg, previous_events) => {
+    //TODO - Instruct mode is currently breaking this.. Need to figure out how to reset before prompting.
+
     // perform the summarization API call
     let result = "";
-    console.log("FTS EXTENSION - Summarizing: ", msg);
+    //console.log("FTS EXTENSION - Summarizing: ", msg);
     try {
-        const prompt = "STOP ROLEPLAY. Provide an outline in bullet format for the SAMPLE TEXT below. IGNORE DETAILS and capture the core events and concepts." +
-            "\n\nSAMPLE TEXT: \n"+ msg+
-            "\n### Response:\n";
+        const prompt = "### New Roleplay:\n### Instruction:\nExtract and organize the main ideas, concepts, and events below into a chronological, concise list. Format the information as bullet points, focusing on clarity."
+        const full_prompt = "[Past Events:\n"+previous_events+"]"+prompt+"\n### Input:\n\nParagraph to Summarize:\n"+msg+"\n### Outline:\n\n-";
 
-        let synopsis = await generateQuietPrompt(prompt);
-        console.log("FTS EXTENSION - Summarized: ", synopsis);
+        let synopsis = await generateRaw(full_prompt, main_api, true);
+        //console.log("FTS EXTENSION - Summarized: ", synopsis);
         result = synopsis;
     }
     catch (error) {
@@ -90,6 +137,35 @@ const summarizeContent = async(msg) => {
     }
     return result;
 };
+
+const consolidateBlockSummary = (blockArray) => {
+    // let prompt = "### New Roleplay\n### Instruction:Edit the existing content below to create a concise, chronological list of events. Place the information in an ordered list format, consolidating details, removing duplication. Refine the presentation without introducing new content.\n### Input: \n"
+
+    console.log("FTS EXTENSION - Received Events for Block: ", blockArray)
+    let blockTemp = [];
+    let final_result = "";
+    blockTemp.push(blockArray[0]);
+    for (let i = 0; i < blockArray.length; i++) {
+        //add blockArray[i] to blockTemp if it is not already in blockTemp
+        if (!blockTemp.includes(blockArray[i])) {
+            blockTemp.push(blockArray[i]);
+        }
+    }
+
+    for (let i = 0; i < blockTemp.length; i++) {
+        final_result += i.toString()+". "+blockTemp[i]+"\n";
+    }
+    // let result = generateRaw(prompt+"### Result:\n\n", main_api, true);
+    console.log("FTS EXTENSION - Consolidated List of Events for Block: ", final_result)
+    return final_result;
+}
+
+const generateSummaryFromEvents = (eventString) => {
+    let prompt = "### New Roleplay\n### Instruction:\nGenerate a summary based on the list of events provided below. Focus on clarity and simplicity.\n### Input: \n"+eventString+"\n### Result:\n\n### Summary:\n";
+
+    let final_result = generateRaw(prompt, main_api, true);
+    return final_result;
+}
 
 const grabMessageBlock= () => {
     const context = getContext();
@@ -103,7 +179,21 @@ const grabMessageBlock= () => {
         else {
             name = context.chat[i].name;
         }
-        contextString += name+": "+context.chat[i].mes + "\n";
+        //build up the context string. Replace newlines with the name of the speaker, so it's avail once we chunk out the block.
+        let string_to_add = name+": "+context.chat[i].mes+"\n";
+        let name_val = string_to_add.split("\n");
+        for(let j = 0; j < name_val.length; j++){
+            if (name_val[j].length < 2){name_val.splice(j, 1); continue;}
+            //if empty lines don't start with the name of the speaker, add the name to the line.
+            if (!name_val[j].startsWith(name)){
+                name_val[j] = name+": "+name_val[j];
+            }
+        }
+        string_to_add = "";
+        for(let j = 0; j < name_val.length; j++){
+            string_to_add += name_val[j]+"\n";
+        }
+        contextString += string_to_add;
     }
     contextString = contextString.split("###SPLIT");
     return contextString;
@@ -121,7 +211,7 @@ jQuery(async () => {
             </div>
             <div class="inline-drawer-content">
                 <div class="example-extension_block flex-container">
-                    <input id="my_button" class="menu_button" type="submit" value="Example Button" />
+                    <input id="my_button" class="menu_button" type="submit" value="Generate Summaries" />
                 </div>
 
                 <div class="example-extension_block flex-container">
