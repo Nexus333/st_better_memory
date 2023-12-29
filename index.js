@@ -3,7 +3,7 @@ import { generateRaw, getRequestHeaders, is_send_press, main_api } from '../../.
 import { executeSlashCommands } from '../../../slash-commands.js';
 
 // Keep track of where your extension is located, name should match repo name
-const extensionName = "st_keyphrase_extraction_fts";
+const extensionName = "better_memory";
 const extensionFolderPath = `scripts/extensions/thirdparty/${extensionName}`;
 const extensionSettings = extension_settings[extensionName];
 const defaultSettings = {};
@@ -20,41 +20,149 @@ async function loadSettings() {
     }
 
     //Updating settings in the UI
-    $("#example_setting").prop("checked", extension_settings[extensionName].example_setting).trigger("input");
+    $("#rake_setting").prop("checked", extension_settings[extensionName].rake_setting).trigger("input");
 }
 
-//perform an button is clicked (later will inject on message submission)
-const onMessageUpdate = async() => {
+//button that summarizes memories. FYI this takes a while. It's not a fast process.
+const onSummarizeMemories = async() => {
+    let msgBlock = grabMessageBlock();
+    summarizeBlockData(msgBlock);
+};
+
+
+const onFindMemories = async() => {
+    let resp = await onLocateMemories("Lilith sits down next to Dirge by a campfire in ancient ruins.");
+}
+
+const onLocateMemories = async(msgPrompt) => {
+    //keyword generation
+    let rake_keys = [];
+    let llm_keys = [];
+    let resultString = "";
+    if (true) {
+        rake_keys = await generateRakeKeywords(msgPrompt);
+        llm_keys = await generateKeywordsFromLLM(msgPrompt, rake_keys);
+    }else{
+        llm_keys = await generateKeywordsFromLLM(msgPrompt);
+    }
+    console.log("BETTER MEMORY - Rake Keys: ", rake_keys);
+    console.log("BETTER MEMORY - LLM Keys: ", llm_keys);
+
+    let wi_events = []
+    //get Key phrases from WI
+    console.log("BETTER MEMORY - Searching through World Info with the following Keywords and Phrases: ", llm_keys);
+    for (let i = 0; i < llm_keys.length; i++) {
+        console.log("BETTER MEMORY - WI Keyphrase: ", llm_keys[i]);
+        let wi_keys = await getLorebookContent(llm_keys[i], false);
+        console.log("BETTER MEMORY - WI Keys: ", wi_keys);
+        for (let j = 0; j < wi_keys.length; j++) {
+            wi_events.push(wi_keys[j]);
+        }
+    }
+    console.log("BETTER MEMORY - Found Memory Triggers: ", wi_events)
+
+    if (wi_events.length < 1) {
+        console.log("BETTER MEMORY - No Memories Found.")
+        resultString = "";
+    }else if (wi_events.length === 1){
+        console.log("BETTER MEMORY - Single Memory Found.")
+        resultString = await getLorebookContent(wi_events[0], true);
+    }else{
+        console.log("BETTER MEMORY - Multiple Memories Found. Filtering using Vectorization.")
+        await insertKeyPhrases(wi_events).then(async() => {
+            await queryVectors(msgPrompt).then(async(data) => {
+                console.log("BETTER MEMORY - Query Result: ", data["chroma_resp"]);
+                console.log("BETTER MEMORY - Query Results Type: ", typeof data["chroma_resp"]);
+                let llm_results =data["chroma_resp"];
+                console.log("BETTER MEMORY - LLM Results: ", llm_results);
+                let llm_docs = llm_results["documents"][0];
+                console.log("BETTER MEMORY - Searching BEST Match: ", llm_docs[0]);
+                resultString = await getLorebookContent(llm_docs[0], true);
+            })
+        });
+    }
+    console.log("BETTER MEMORY - Memory Selected: ", resultString);
+    return resultString;
+}
+
+const generateKeywordsFromLLM = async(message, proposedKeywordsArray=[], removeCharacterNames=true) => {
     // Generation is in progress, summary prevented
     const prompt = "### Instruction:\n Generate 3 keywords or phrases from the following text as a comma separated list: "
+    let keyword_list = "";
     if (is_send_press) {
         return;
     }
+
+    if (proposedKeywordsArray.length > 0){
+        for (let i = 0; i < proposedKeywordsArray.length; i++) {
+            keyword_list += proposedKeywordsArray[i]+", ";
+        }
+    }
+
     const context = getContext();
-    let last_message = context.chat[context.chat.length-1].mes;
-    console.log("BETTER MEMORY - Message updated: ", last_message);
-    let res = await generateRaw(prompt+last_message+"### Response:\n", main_api, true);
+    const proposedKeywordsPrompt = "[Proposed Keywords: "+keyword_list+"]";
+    console.log("BETTER MEMORY - Generating keywords for Message: ", message);
+    let res = await generateRaw(proposedKeywordsPrompt+prompt+message+"### Response:\n", main_api, true);
     let res2 = res.split(",");
     if (res2.length ==1) {
         res2 = res2 = res.split("\n");
     }
     res = res2;
+
     for (let i = 0; i < res.length; i++) {
         res[i] = res[i].replace(new RegExp("^[0-9]*\. ", ""), "").replace(new RegExp("^.*\: ", ""), "").trim();
     }
+
+    if (removeCharacterNames){
+        let characters = await getSceneCharacters();
+        let data = res;
+        for (let i = 0; i < data.length; i++) {
+            //remove data if contains character name in characters array.
+            for (let j = 0; j < characters.length; j++) {
+                if (data[i].toLowerCase().includes(characters[j].toLowerCase())){
+                    data.splice(i, 1);
+                }
+            }
+        }
+        res = data;
+    }
+
     console.log("BETTER MEMORY - Response: ", res);
-    let msgBlock = grabMessageBlock();
-    //console.log("BETTER MEMORY - Message Block: ", msgBlock);
-    //let result = summarizeBlock(msgBlock);
+    return res;
+}
 
-    //Disabling Temporarily to test other functionality.
-    // summarizeBlockData(msgBlock);
+const generateRakeKeywords = async(message, removeCharacterNames=true) => {
+    if (is_send_press) {
+        return;
+    }
+    let data = [];
+    await fetch('http://localhost:18000/keywordgen', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            prompt: message
+        }),
+    }).then(response => response.json()).then(dat => {
+        data = dat["keywords"];
+    });
 
-    let wi_content = await getLorebookContent("Lilith sits down next to Dirge by a campfire in ancient ruins.");
-    console.log("BETTER MEMORY - WI Content: ", wi_content);
+    console.log("BETTER MEMORY - Generating keywords for Message: ", message);
+    console.log("BETTER MEMORY - Proposed Keywords were: ", data);
+    if (removeCharacterNames){
+        let characters = await getSceneCharacters();
+        for (let i = 0; i < data.length; i++) {
+            //remove data if contains character name in characters array.
+            for (let j = 0; j < characters.length; j++) {
+                if (data[i].toLowerCase().includes(characters[j].toLowerCase())){
+                    data.splice(i, 1);
+                }
+            }
+        }
+    }
 
-    //console.log(result);
-};
+    return data;
+}
+
 
 const summarizeBlockData = async(msgBlock) => {
     let msg = msgBlock;
@@ -157,7 +265,7 @@ const summarizeBlockData = async(msgBlock) => {
 }
 
 //get WI content
-const getLorebookContent = async(keyword) => {
+const getLorebookContent = async(keyword, content=true) => {
     const lorebook_name = getLorebookName()
     const sourcepath = '../../../../worlds/';
     let world_info="";
@@ -187,8 +295,13 @@ const getLorebookContent = async(keyword) => {
         //iterate through the keys to check if the keyword is present.
         for (let i = 0; i < keyArray.length; i++) {
             if (keyArray[i].includes(keyword)){
-                console.log("BETTER MEMORY - Found matching WI Content: " , value.content, "at UID: ", value.uid);
-                hits.push(value);
+                if (content === true) {
+                    console.log("BETTER MEMORY - Found matching WI Content: " , value.content, "at UID: ", value.uid);
+                    hits.push(value);
+                }else{
+                    console.log("BETTER MEMORY - Found matching WI Keyphrase: " , keyArray[i]);
+                    hits.push(keyArray[i]);
+                }
             }
         }
     }
@@ -216,7 +329,8 @@ const getSceneCharacters = async() => {
     let characters = [];
 
     //Check if this is a group vs 1 on 1 chat.
-    if (context.is_group === false){
+    console.log("BETTER MEMORY - Checking if group chat: ", context.groupId, " Context: ", context);
+    if (context.groupId === null){
         characters.push(context.name1)
         characters.push(context.name2)
     }else{
@@ -335,7 +449,7 @@ const insertKeyPhrases = async(keyphraseArray) => {
 }
 
 //purge vector store
-async function purgeVectorIndex(collectionId) {
+async function purgeVectorIndex() {
     try {
 
         // const response = await fetch('/api/vector/purge', {
@@ -363,7 +477,7 @@ async function purgeVectorIndex(collectionId) {
     } catch (error) {
         console.error('Vectors: Failed to purge', error);
     }
-    console.log("BETTER MEMORY - Purge Vector DB Completed with result: ", response.json());
+    console.log("BETTER MEMORY - Purge Vector DB Completed with result: ", JSON.stringify(response.json()));
 }
 
 //Placemarker for future functionality. This currently isn't exposed. Has to be deleted manually through the UI.
@@ -478,10 +592,12 @@ jQuery(async () => {
                 <div class="example-extension_block flex-container">
                     <input id="genmem_button" class="menu_button" type="submit" value="Generate Memories" />
                 </div>
-
                 <div class="example-extension_block flex-container">
-                    <input id="example_setting" type="checkbox" />
-                    <label for="example_setting">This is an example</label>
+                    <input id="locmem_button" class="menu_button" type="submit" value="Locate Memories" />
+                </div>
+                <div class="example-extension_block flex-container">
+                    <input id="rake_setting" type="checkbox" />
+                    <label for="rake_setting">Use Rake For Keyword Extraction</label>
                 </div>
 
                 <hr class="sysHR" />
@@ -492,8 +608,9 @@ jQuery(async () => {
     $("#extensions_settings").append(settingsHtml);
 
     // These are examples of listening for events
-    $("#genmem_button").on("click", onMessageUpdate);
-    // $("#example_setting").on("input", onExampleInput);
+    $("#genmem_button").on("click", onSummarizeMemories);
+    $("#locmem_button").on("click", onFindMemories);
+    // $("#rake_setting").on("input", onExampleInput);
 
     // Load settings when starting things up (if you have any)
     loadSettings();
