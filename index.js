@@ -1,6 +1,6 @@
 import { getContext, extension_settings} from '../../../extensions.js';
-import { generateRaw, is_send_press, main_api } from '../../../../script.js';
-
+import { generateRaw, getRequestHeaders, is_send_press, main_api } from '../../../../script.js';
+import { executeSlashCommands } from '../../../slash-commands.js';
 
 // Keep track of where your extension is located, name should match repo name
 const extensionName = "st_keyphrase_extraction_fts";
@@ -32,7 +32,7 @@ const onMessageUpdate = async() => {
     }
     const context = getContext();
     let last_message = context.chat[context.chat.length-1].mes;
-    console.log("FTS EXTENSION - Message updated: ", last_message);
+    console.log("BETTER MEMORY - Message updated: ", last_message);
     let res = await generateRaw(prompt+last_message+"### Response:\n", main_api, true);
     let res2 = res.split(",");
     if (res2.length ==1) {
@@ -42,24 +42,34 @@ const onMessageUpdate = async() => {
     for (let i = 0; i < res.length; i++) {
         res[i] = res[i].replace(new RegExp("^[0-9]*\. ", ""), "").replace(new RegExp("^.*\: ", ""), "").trim();
     }
-    console.log("FTS EXTENSION - Response: ", res);
+    console.log("BETTER MEMORY - Response: ", res);
     let msgBlock = grabMessageBlock();
-    //console.log("FTS EXTENSION - Message Block: ", msgBlock);
+    //console.log("BETTER MEMORY - Message Block: ", msgBlock);
     //let result = summarizeBlock(msgBlock);
-    summarizeBlockData(msgBlock);
+
+    //Disabling Temporarily to test other functionality.
+    // summarizeBlockData(msgBlock);
+
+    let wi_content = await getLorebookContent("Lilith sits down next to Dirge by a campfire in ancient ruins.");
+    console.log("BETTER MEMORY - WI Content: ", wi_content);
+
     //console.log(result);
 };
 
 const summarizeBlockData = async(msgBlock) => {
     let msg = msgBlock;
-    //console.log("FTS EXTENSION - Block to be Summarized:", msg);
+    //For Testing purposes, only summarize the first block.
+    // let msg =[];
+    // msg.push(msgBlock[0]);
+
+    //console.log("BETTER MEMORY - Block to be Summarized:", msg);
     let result = [];
     let result_dict = {}
     let previous_events = "";
 
     //process each block in msgBlock
     for(let block_index = 0; block_index < msg.length; block_index++){
-        //console.log("FTS EXTENSION - Summarizing Block: ", msg[block_index])
+        //console.log("BETTER MEMORY - Summarizing Block: ", msg[block_index])
         let msgChunks = await( chunkBlock(msg[block_index]));
 
         //process each chunk of the message block
@@ -68,12 +78,12 @@ const summarizeBlockData = async(msgBlock) => {
             if (msgChunks[chunk_index].length < 2){chunk_index++;}
             //bypass any chunks that end with character name:
             if (msgChunks[chunk_index].endsWith(": ")){chunk_index++;}
-            console.log("FTS EXTENSION - Summarizing Chunk: ", msgChunks[chunk_index]);
+            console.log("BETTER MEMORY - Summarizing Chunk: ", msgChunks[chunk_index]);
             let summary = await( summarizeContent(msgChunks[chunk_index], previous_events));
             previous_events = summary;
             summary = summary.replace("- ", "");
             let summary_list = summary.split("\n");
-            console.log("FTS EXTENSION - Chunk Summary: ", summary_list);
+            console.log("BETTER MEMORY - Chunk Summary: ", summary_list);
 
             //check and store current result length for comparison later.
             let result_length = result.length;
@@ -88,12 +98,12 @@ const summarizeBlockData = async(msgBlock) => {
                     if (summary_list[summary_index].length > 2){
                         //make sure I'm not adding instructions or contextual information.
                         if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
-                            result.push(summary_list[summary_index]);
+                            result.push(summary_list[summary_index].replace("- ", "").replaceAll('*', ""));
                         }else{
                             //throw away any generated outline. This is probably the LLM hallucinating. Fallback on generating data from the chunk.
                             summary_list = []
                             result = previous_result
-                            console.log("FTS EXTENSION - LLM hallucination detected. Falling back to chunk data.")
+                            console.log("BETTER MEMORY - LLM hallucination detected. Falling back to chunk data.")
                         }
                     }
                 }
@@ -107,10 +117,10 @@ const summarizeBlockData = async(msgBlock) => {
 
             //add memories based on default chunk text if the chunk did not add any new memories.
             if (result.length === result_length){
-                console.log("FTS EXTENSION - No new events found in chunk, summarizing previous events.");
+                console.log("BETTER MEMORY - No new events found in chunk, summarizing previous events.");
                 //replace all punctuation to . for summarization
                 summary = msgChunks[chunk_index].replace(new RegExp("[\.\?\!]", "g"), ".").replace(new RegExp("[\;\:]", "g"), ".").replace(", and", ".").replace(new RegExp("[\"]$", "g"), "\".");
-                console.log("FTS EXTENSION - Summarizing Chunk after Failure to Outline: ", summary);
+                console.log("BETTER MEMORY - Summarizing Chunk after Failure to Outline: ", summary);
                 summary = summary.replace(new RegExp("### .*\: ", "g"), "").replace("\[.*\]", "").replace(new RegExp("^[0-9]*\. ", ""), "").replace(new RegExp("^.*\: ", ""), "").trim();
                 summary_list = summary.split(".");
 
@@ -122,7 +132,7 @@ const summarizeBlockData = async(msgBlock) => {
                             if(summary_list[summary_index].split(" ").length > 3) {
                                 //make sure I'm not adding instructions or contextual information.
                                 if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
-                                    result.push(summary_list[summary_index]);
+                                    result.push(summary_list[summary_index].replace ("- ", "").replaceAll('*', ""));
                                 }
                             }
                         }
@@ -136,13 +146,230 @@ const summarizeBlockData = async(msgBlock) => {
         let summary = await generateSummaryFromEvents(event_block);
         result_dict[block_index.toString()+"_summary"] = summary;
 
-        console.log("FTS EXTENSION - Block Summarized: "+msg[block_index]+"\nBlock Summary: \n"+result_dict[block_index.toString()+"_summary"] )
+        console.log("BETTER MEMORY - Block Summarized: "+msg[block_index]+"\nBlock Summary: \n"+result_dict[block_index.toString()+"_summary"] )
+
+        saveDataToWorldInfo(result, summary);
 
         //reset result and events for next block
         result = [];
         previous_events = summary;
     }
 }
+
+//get WI content
+const getLorebookContent = async(keyword) => {
+    const lorebook_name = getLorebookName()
+    const sourcepath = '../../../../worlds/';
+    let world_info="";
+    let hits = [];
+    //Can't get the f ing UID to work. Loading in the json directly till I figure it out.
+    // let UID = "";
+    // let content_result = "No Content Found.";
+    // try{
+    //     UID = getEntryUID(keyword)
+    //     console.log("BETTER MEMORY - Lorebook UID for keyword (", keyword, " set to : ", UID)
+    //     content_result = await executeSlashCommands("/getentryfield file="+lorebook_name+" field=content "+UID);
+    //     console.log("BETTER MEMORY - Lorebook Content for : ", lorebook_name, " : ", content_result)
+    // }catch(e){
+    //     console.log("BETTER MEMORY - Lorebook Content for : ", lorebook_name, " does not exist: ", e, "UID: ", UID);
+    // }
+    //
+    // return content_result;
+
+    //load the json file directly and search for the keyword.
+    await fetch(sourcepath+lorebook_name+".json").then(response => response.json()).then(data => {
+        world_info = data;
+    });
+    console.log("BETTER MEMORY - Lorebook Content for : ", lorebook_name, " : ", world_info)
+    for (const [key, value] of Object.entries(world_info.entries)) {
+        console.log("BETTER MEMORY - Checking WI for keyword: ", keyword, "at key: ", key);
+        let keyArray = value.key;
+        //iterate through the keys to check if the keyword is present.
+        for (let i = 0; i < keyArray.length; i++) {
+            if (keyArray[i].includes(keyword)){
+                console.log("BETTER MEMORY - Found matching WI Content: " , value.content, "at UID: ", value.uid);
+                hits.push(value);
+            }
+        }
+    }
+
+    return hits;
+}
+
+const getLorebookName = () => {
+    const context = getContext();
+    let chat_id = context.chatId;
+    const lorebook_name = chat_id.replace("-", "_").replaceAll(" ", "").replace(new RegExp("\@.*$", ""), "")+"_memories";
+    return lorebook_name;
+}
+
+const getEntryUID = async(keyword) => {
+    let UID = await(executeSlashCommands("/findentry file="+getLorebookName()+" field=key \""+keyword+"\""));
+    console.log("BETTER MEMORY - UUID Set to ", UID, " for keyword: ", keyword);
+    return UID;
+}
+
+const getSceneCharacters = async() => {
+    const context = getContext();
+
+    //placeholder to return characters later on.
+    let characters = [];
+
+    //Check if this is a group vs 1 on 1 chat.
+    if (context.is_group === false){
+        characters.push(context.name1)
+        characters.push(context.name2)
+    }else{
+        //get name based on group members out of context.
+        let group_id = context.groupId;
+        let group_members = context.groups[group_id].members;
+        for (let i = 0; i < context.characters.length; i++) {
+            if (group_members.includes(context.characters[i].avatar)){
+                characters.push(context.characters[i].name);
+            };
+        }
+    }
+    return characters;
+}
+
+
+const saveDataToWorldInfo = async(eventArray, summary) => {
+    //Don't create entries if there are no events.
+    if (eventArray.length < 1) {
+        return;
+    }
+    //don't try to persist a summary if it's empty.
+    if (summary.length < 1) {
+        return;
+    }
+
+    //Keywords String Variable
+    let keywords = "";
+    let content_result = "";
+
+    const lorebook_name = getLorebookName();
+    console.log("BETTER MEMORY - Creating Lorebook for : ", lorebook_name);
+    for(let i = 0; i < eventArray.length; i++) {
+        let event_keyword = eventArray[i].replace(new RegExp("^[0-9]*\. ", ""), "").replace("\"", "").replaceAll(",", "").trim();
+        //update the keywords string
+        keywords += event_keyword+", ";
+    }
+    //remove the last comma and space from the keywords string.
+    keywords = keywords.slice(0, -2);
+
+    //TODO: check if there is an existing entry for the event keyword.
+    await executeSlashCommands("/createentry file="+lorebook_name+" key=\""+keywords+"\" "+summary);
+
+    await executeSlashCommands("/createentry file="+lorebook_name+" key=\"memoryKeywords\" "+keywords);
+    console.log("BETTER MEMORY - Lorebook Created for : ", lorebook_name);
+
+    //verify last entry exists
+    console.log("BETTER MEMORY - Verifying last entry in : ", lorebook_name);
+    try{
+        let content = await getLorebookContent(eventArray[eventArray.length-1]);
+        console.log("BETTER MEMORY - Last entry in : ", lorebook_name, " content: ", content);
+    }finally{
+        keywords = keywords.split(",");
+        //let resp = insertKeyPhrases(keywords)
+        console.log("Querying Vectors to ensure entry is searchable.");
+        //let result = queryVectors(keywords[keywords.length-1]);
+        console.log("BETTER MEMORY - Query Result: ", result);
+    }
+}
+
+const queryVectors = async(queryString) => {
+    // const response = await fetch('/api/vector/query', {
+    //     method: 'POST',
+    //     headers: getRequestHeaders(),
+    //     body: JSON.stringify({
+    //         collectionId: getLorebookName(),
+    //         searchText: queryString,
+    //         topK: 3,
+    //         source: "transformers",
+    //     }),
+    // });
+
+    const response = await fetch('http://localhost:18000/data/', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            collection: getLorebookName(),
+            query: [queryString],
+            n_results: 3
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to query collection ${getLorebookName()}: `);
+    }
+
+    const results = await response.json();
+    return results;
+}
+
+//insert keys as vectors
+const insertKeyPhrases = async(keyphraseArray) => {
+    // const response = await fetch('/api/vector/insert', {
+    //     method: 'POST',
+    //     headers: getRequestHeaders(),
+    //     body: JSON.stringify({
+    //         collectionId: getLorebookName(),
+    //         items: keyphraseArray,
+    //         source: 'transformers',
+    //     }),
+    // });
+
+    const response = await fetch('http://localhost:18000/data/', {
+        method: 'PUT',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            collection: getLorebookName(),
+            documents: keyphraseArray,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to insert vector items for collection ${getLorebookName()}`);
+    }
+    console.log("BETTER MEMORY - Inserted vector items for collection "+getLorebookName(), " : \n", response.json());
+}
+
+//purge vector store
+async function purgeVectorIndex(collectionId) {
+    try {
+
+        // const response = await fetch('/api/vector/purge', {
+        //     method: 'POST',
+        //     headers: getRequestHeaders(),
+        //     body: JSON.stringify({
+        //         collectionId: getLorebookName(),
+        //     }),
+        // });
+
+        const response = await fetch('http://localhost:18000/data/', {
+            method: 'DELETE',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                collection: getLorebookName(),
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Could not delete vector index for collection ${getLorebookName()}`);
+        }
+
+        console.log(`Vectors: Purged vector index for collection ${getLorebookName()}`);
+
+    } catch (error) {
+        console.error('Vectors: Failed to purge', error);
+    }
+    console.log("BETTER MEMORY - Purge Vector DB Completed with result: ", response.json());
+}
+
+//Placemarker for future functionality. This currently isn't exposed. Has to be deleted manually through the UI.
+// const purgeMemories = async() => {
+//
+// }
 
 const chunkBlock = async(msg) => {
     //split the message provided based on paragraphs.
@@ -156,17 +383,15 @@ const chunkBlock = async(msg) => {
 }
 
 const summarizeContent = async(msg, previous_events) => {
-    //TODO - Instruct mode is currently breaking this.. Need to figure out how to reset before prompting.
-
     // perform the summarization API call
     let result = "";
-    //console.log("FTS EXTENSION - Summarizing: ", msg);
+    //console.log("BETTER MEMORY - Summarizing: ", msg);
     try {
         const prompt = "### New Roleplay:\n### Instruction:\nExtract and organize the main ideas, concepts, and events below into a chronological, concise list. Format the information as bullet points, focusing on clarity."
         const full_prompt = "[Past Events:\n"+previous_events+"]"+prompt+"\n### Input:\n\nParagraph to Summarize:\n"+msg+"\n### Outline:\n\n-";
 
         let synopsis = await generateRaw(full_prompt, main_api, true);
-        //console.log("FTS EXTENSION - Summarized: ", synopsis);
+        //console.log("BETTER MEMORY - Summarized: ", synopsis);
         result = synopsis;
     }
     catch (error) {
@@ -181,7 +406,7 @@ const summarizeContent = async(msg, previous_events) => {
 const consolidateBlockSummary = (blockArray) => {
     // let prompt = "### New Roleplay\n### Instruction:Edit the existing content below to create a concise, chronological list of events. Place the information in an ordered list format, consolidating details, removing duplication. Refine the presentation without introducing new content.\n### Input: \n"
 
-    console.log("FTS EXTENSION - Received Events for Block: ", blockArray)
+    console.log("BETTER MEMORY - Received Events for Block: ", blockArray)
     let blockTemp = [];
     let final_result = "";
     blockTemp.push(blockArray[0]);
@@ -196,7 +421,7 @@ const consolidateBlockSummary = (blockArray) => {
         final_result += i.toString()+". "+blockTemp[i]+"\n";
     }
     // let result = generateRaw(prompt+"### Result:\n\n", main_api, true);
-    console.log("FTS EXTENSION - Consolidated List of Events for Block: ", final_result)
+    console.log("BETTER MEMORY - Consolidated List of Events for Block: ", final_result)
     return final_result;
 }
 
@@ -213,7 +438,7 @@ const grabMessageBlock= () => {
     for (let i = 0; i < context.chat.length; i++) {
         let name = "unset";
         if (context.chat[i].is_user == true) {
-            console.log("FTS EXTENSION - Context block split triggered!")
+            console.log("BETTER MEMORY - Context block split triggered!")
             if (i>2){ name = "###SPLIT"+context.chat[i].name;}
         }
         else {
