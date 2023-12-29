@@ -1,6 +1,7 @@
 import { getContext, extension_settings} from '../../../extensions.js';
 import { generateRaw, getRequestHeaders, is_send_press, main_api } from '../../../../script.js';
 import { executeSlashCommands } from '../../../slash-commands.js';
+import { getStringHash } from '../../../utils.js';
 
 // Keep track of where your extension is located, name should match repo name
 const extensionName = "better_memory";
@@ -25,8 +26,14 @@ async function loadSettings() {
 
 //button that summarizes memories. FYI this takes a while. It's not a fast process.
 const onSummarizeMemories = async() => {
+    let context = getContext();
+    const messages = context.chat;
+    await executeSlashCommands("/send \"Generating Memories... Please avoid generation till complete.\"")
     let msgBlock = grabMessageBlock();
-    summarizeBlockData(msgBlock);
+    await summarizeBlockData(msgBlock);
+    await executeSlashCommands("/send \"Memories Generated.\"");
+    context.chat.splice(messages.length-3, 2);
+
 };
 
 
@@ -174,93 +181,128 @@ const summarizeBlockData = async(msgBlock) => {
     let result = [];
     let result_dict = {}
     let previous_events = "";
+    let blocks_hashed = [];
+    let loaded_hashes = [];
+
+    //load block hashes from WI
+    try{
+        loaded_hashes = await getLorebookContent("blocks_hashed", true).then((data) => {
+            console.log(JSON.stringify(data))
+            return data[0].content.split("\n");
+        });
+        console.log("BETTER MEMORY - Loaded Hashes: ", loaded_hashes);
+    }catch(e){
+        console.log("BETTER MEMORY - No Hashes Loaded: ", e);
+    }
 
     //process each block in msgBlock
     for(let block_index = 0; block_index < msg.length; block_index++){
         //console.log("BETTER MEMORY - Summarizing Block: ", msg[block_index])
-        let msgChunks = await( chunkBlock(msg[block_index]));
+        let block_hash = getStringHash(msg[block_index]);
+        //check if the block has already been summarized.
+        if (loaded_hashes.includes(block_hash.toString())){
+            console.log("BETTER MEMORY - Block already summarized. Skipping.");
+            //skip the block if it has already been summarized.
+            continue;
+        }
+        else{
+            console.log("BETTER MEMORY - Summarizing Block with Hash: ",block_hash);
+            let msgChunks = await( chunkBlock(msg[block_index]));
 
-        //process each chunk of the message block
-        for(let chunk_index = 0; chunk_index < msgChunks.length; chunk_index++){
-            //skip empty chunks
-            if (msgChunks[chunk_index].length < 2){chunk_index++;}
-            //bypass any chunks that end with character name:
-            if (msgChunks[chunk_index].endsWith(": ")){chunk_index++;}
-            console.log("BETTER MEMORY - Summarizing Chunk: ", msgChunks[chunk_index]);
-            let summary = await( summarizeContent(msgChunks[chunk_index], previous_events));
-            previous_events = summary;
-            summary = summary.replace("- ", "");
-            let summary_list = summary.split("\n");
-            console.log("BETTER MEMORY - Chunk Summary: ", summary_list);
+            //process each chunk of the message block
+            for(let chunk_index = 0; chunk_index < msgChunks.length; chunk_index++){
+                //skip empty chunks
+                if (msgChunks[chunk_index].length < 2){chunk_index++;}
+                //bypass any chunks that end with character name:
+                if (msgChunks[chunk_index].endsWith(": ")){chunk_index++;}
+                console.log("BETTER MEMORY - Summarizing Chunk: ", msgChunks[chunk_index]);
+                let summary = await( summarizeContent(msgChunks[chunk_index], previous_events));
+                previous_events = summary;
+                summary = summary.replace("- ", "");
+                let summary_list = summary.split("\n");
+                console.log("BETTER MEMORY - Chunk Summary: ", summary_list);
 
-            //check and store current result length for comparison later.
-            let result_length = result.length;
+                //check and store current result length for comparison later.
+                let result_length = result.length;
 
-            //fallback in event of failure to outline.
-            let previous_result = result;
+                //fallback in event of failure to outline.
+                let previous_result = result;
 
-            //push each of the summaries onto the result array.
-            for (let summary_index = 0; summary_index < summary_list.length; summary_index++) {
-                if (!result.includes(summary_list[summary_index])) {
-                    //ensure that the summary is not empty
-                    if (summary_list[summary_index].length > 2){
-                        //make sure I'm not adding instructions or contextual information.
-                        if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
-                            result.push(summary_list[summary_index].replace("- ", "").replaceAll('*', ""));
-                        }else{
-                            //throw away any generated outline. This is probably the LLM hallucinating. Fallback on generating data from the chunk.
-                            summary_list = []
-                            result = previous_result
-                            console.log("BETTER MEMORY - LLM hallucination detected. Falling back to chunk data.")
-                        }
-                    }
-                }
-            }
-
-            result = result.filter((el)=> {
-                if (el.length > 2){
-                    return el;
-                }
-            });
-
-            //add memories based on default chunk text if the chunk did not add any new memories.
-            if (result.length === result_length){
-                console.log("BETTER MEMORY - No new events found in chunk, summarizing previous events.");
-                //replace all punctuation to . for summarization
-                summary = msgChunks[chunk_index].replace(new RegExp("[\.\?\!]", "g"), ".").replace(new RegExp("[\;\:]", "g"), ".").replace(", and", ".").replace(new RegExp("[\"]$", "g"), "\".");
-                console.log("BETTER MEMORY - Summarizing Chunk after Failure to Outline: ", summary);
-                summary = summary.replace(new RegExp("### .*\: ", "g"), "").replace("\[.*\]", "").replace(new RegExp("^[0-9]*\. ", ""), "").replace(new RegExp("^.*\: ", ""), "").trim();
-                summary_list = summary.split(".");
-
+                //push each of the summaries onto the result array.
                 for (let summary_index = 0; summary_index < summary_list.length; summary_index++) {
                     if (!result.includes(summary_list[summary_index])) {
                         //ensure that the summary is not empty
                         if (summary_list[summary_index].length > 2){
-                            //ensure that the summary is not a character name or single word
-                            if(summary_list[summary_index].split(" ").length > 3) {
-                                //make sure I'm not adding instructions or contextual information.
-                                if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
-                                    result.push(summary_list[summary_index].replace ("- ", "").replaceAll('*', ""));
+                            //make sure I'm not adding instructions or contextual information.
+                            if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
+                                result.push(summary_list[summary_index].replace("- ", "").replaceAll('*', ""));
+                            }else{
+                                //throw away any generated outline. This is probably the LLM hallucinating. Fallback on generating data from the chunk.
+                                summary_list = []
+                                result = previous_result
+                                console.log("BETTER MEMORY - LLM hallucination detected. Falling back to chunk data.")
+                            }
+                        }
+                    }
+                }
+
+                result = result.filter((el)=> {
+                    if (el.length > 2){
+                        return el;
+                    }
+                });
+
+                //add memories based on default chunk text if the chunk did not add any new memories.
+                if (result.length === result_length){
+                    console.log("BETTER MEMORY - No new events found in chunk, summarizing previous events.");
+                    //replace all punctuation to . for summarization
+                    summary = msgChunks[chunk_index].replace(new RegExp("[\.\?\!]", "g"), ".").replace(new RegExp("[\;\:]", "g"), ".").replace(", and", ".").replace(new RegExp("[\"]$", "g"), "\".");
+                    console.log("BETTER MEMORY - Summarizing Chunk after Failure to Outline: ", summary);
+                    summary = summary.replace(new RegExp("### .*\: ", "g"), "").replace("\[.*\]", "").replace(new RegExp("^[0-9]*\. ", ""), "").replace(new RegExp("^.*\: ", ""), "").trim();
+                    summary_list = summary.split(".");
+
+                    for (let summary_index = 0; summary_index < summary_list.length; summary_index++) {
+                        if (!result.includes(summary_list[summary_index])) {
+                            //ensure that the summary is not empty
+                            if (summary_list[summary_index].length > 2){
+                                //ensure that the summary is not a character name or single word
+                                if(summary_list[summary_index].split(" ").length > 3) {
+                                    //make sure I'm not adding instructions or contextual information.
+                                    if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
+                                        result.push(summary_list[summary_index].replace ("- ", "").replaceAll('*', ""));
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+
+            result_dict[block_index.toString()+"_actions"] = result;
+            let event_block = await consolidateBlockSummary(result)
+            let summary = await generateSummaryFromEvents(event_block);
+            result_dict[block_index.toString()+"_summary"] = summary;
+
+            console.log("BETTER MEMORY - Block Summarized: "+msg[block_index]+"\nBlock Summary: \n"+result_dict[block_index.toString()+"_summary"] )
+            result.push("Block_"+block_index.toString());
+            saveDataToWorldInfo(result, summary);
+
+            //reset result and events for next block
+            result = [];
+            previous_events = summary;
+
+            //add block hash to list of hashed blocks
+            blocks_hashed.push(block_hash);
         }
-
-        result_dict[block_index.toString()+"_actions"] = result;
-        let event_block = await consolidateBlockSummary(result)
-        let summary = await generateSummaryFromEvents(event_block);
-        result_dict[block_index.toString()+"_summary"] = summary;
-
-        console.log("BETTER MEMORY - Block Summarized: "+msg[block_index]+"\nBlock Summary: \n"+result_dict[block_index.toString()+"_summary"] )
-
-        saveDataToWorldInfo(result, summary);
-
-        //reset result and events for next block
-        result = [];
-        previous_events = summary;
+    }
+    //check if any blocks were hashed
+    if (blocks_hashed.length > 0) {
+        //add hashed blocks to loaded hashes
+        for (let i = 0; i < blocks_hashed.length; i++) {
+            loaded_hashes.push(blocks_hashed[i]);
+        }
+        //save loaded hashes to WI
+        await executeSlashCommands("/createentry file=" + getLorebookName() + " key=\"blocks_hashed\" " + loaded_hashes.join("\n"));
     }
 }
 
@@ -371,7 +413,6 @@ const saveDataToWorldInfo = async(eventArray, summary) => {
     //remove the last comma and space from the keywords string.
     keywords = keywords.slice(0, -2);
 
-    //TODO: check if there is an existing entry for the event keyword.
     await executeSlashCommands("/createentry file="+lorebook_name+" key=\""+keywords+"\" "+summary);
 
     await executeSlashCommands("/createentry file="+lorebook_name+" key=\"memoryKeywords\" "+keywords);
@@ -382,12 +423,8 @@ const saveDataToWorldInfo = async(eventArray, summary) => {
     try{
         let content = await getLorebookContent(eventArray[eventArray.length-1]);
         console.log("BETTER MEMORY - Last entry in : ", lorebook_name, " content: ", content);
-    }finally{
-        keywords = keywords.split(",");
-        //let resp = insertKeyPhrases(keywords)
-        console.log("Querying Vectors to ensure entry is searchable.");
-        //let result = queryVectors(keywords[keywords.length-1]);
-        console.log("BETTER MEMORY - Query Result: ", result);
+    }catch(e){
+        console.log("BETTER MEMORY - Unable to access last entry in ", lorebook_name, ": ", e);
     }
 }
 
