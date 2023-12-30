@@ -40,11 +40,13 @@ For example, if you were writing a combat scene, and it searched through relevan
 
 ## Downsides
 - Generating summaries and events is slow. Which is why they're persisted to world info. This can take several minutes to run through your chat since it requires multiple passes through generation to create.
+- Since this uses the same API that the user uses for generation, it will block generation while memory generation is occurring (This is why I opted to have it triggerred manually). 
 - It's not a perfect solution, but it's a better one than what we have now.
 - Requires external API to work, since I had trouble getting some internal API to work.
 - Adds a couple of seconds to generation when used. 
 - Haven't tested it extensively on all models, so far just Psyfighter and Mythalion, so your mileage may vary. Don't expect this to be an issue with any of the major services, but some of the smaller models may have issues?? (I don't know, I haven't tested it.)
 - There's probably some issues, since I didn't put all the guards I possibly could have in place. Assume that this is a PoC, and not a production ready extension.
+- This is designed for Narrative summary. If you try to use it to summarize for something other than stories or chats, it'll probably be bad news bears.. :shrug:
 
 ## Installation and Usage
 

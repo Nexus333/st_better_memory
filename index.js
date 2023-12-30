@@ -1,5 +1,5 @@
-import { getContext, extension_settings} from '../../../extensions.js';
-import { generateRaw, getRequestHeaders, is_send_press, main_api, eventSource, event_types, saveSettings } from '../../../../script.js';
+import { getContext, extension_settings, ModuleWorkerWrapper } from '../../../extensions.js';
+import { generateRaw, getRequestHeaders, is_send_press, main_api, eventSource, event_types, saveSettings, saveChat, setSendButtonState } from '../../../../script.js';
 import { executeSlashCommands } from '../../../slash-commands.js';
 import { getStringHash, debounce } from '../../../utils.js';
 
@@ -9,8 +9,7 @@ const extensionFolderPath = `scripts/extensions/thirdparty/${extensionName}`;
 const extensionSettings = extension_settings[extensionName];
 const defaultSettings = {};
 let inApiCall = false;
-
-
+let messagesGenerating = false;
 
 // Loads the extension settings if they exist, otherwise initializes them to the defaults.
 async function loadSettings() {
@@ -24,16 +23,29 @@ async function loadSettings() {
     $("#rake_setting").prop("checked", extension_settings[extensionName].rake_setting).trigger("input");
 }
 
-//button that summarizes memories. FYI this takes a while. It's not a fast process.
-const onSummarizeMemories = async() => {
+//function to summarize Memories. It's not a fast process.
+const SummarizeMemories = async() => {
+    //check if generation is in progress.
+    if (messagesGenerating === true) {
+        console.log("BETTER MEMORY - Generation in progress. Skipping.");
+        return;
+    }
+
+    //prevent generation if summarizing
+    setSendButtonState(true);
+    messagesGenerating = true;
+
     let context = getContext();
     const messages = context.chat;
     let msgBlock = grabMessageBlock();
 
-    //notify the end user that the process has started.
-    await executeSlashCommands("/echo \"Generating Memories... Please avoid generation till complete.\"")
     await summarizeBlockData(msgBlock);
-    await executeSlashCommands("/echo \"Memories Generated.\"");
+
+    //reset the generation flag.
+    messagesGenerating = false;
+
+    //allow the user to generate again.
+    setSendButtonState(false);
 };
 
 
@@ -41,13 +53,84 @@ const onFindMemories = async() => {
     let resp = await onLocateMemories("Lilith sits down next to Dirge by a campfire in ancient ruins.");
 }
 
-const onMessageUpdate = async() => {
-    //test that this actually delays generation. Wait 30 seconds.
+// const onMessageUpdate = async() => {
+//     //test that this actually delays generation. Wait 30 seconds.
+//     console.log("BETTER MEMORY - Message Update Triggered.");
+//     await new Promise((r) => setTimeout(r, 30000));
+//     console.log("BETTER MEMORY - Returning to Generation after 30 seconds.");
+//     debounce(() => saveSettings(), 1000);
+// };
+
+//function called when the summarize button is pressed. Debounced to prevent multiple calls.
+const onSummarize = debounce(async() => await SummarizeMemories(), 500);
+
+const onNewMessageGenerated = debounce(async() => {
     console.log("BETTER MEMORY - Message Update Triggered.");
-    await new Promise((r) => setTimeout(r, 30000));
-    console.log("BETTER MEMORY - Returning to Generation after 30 seconds.");
-    debounce(() => saveSettings(), 1000);
-};
+
+    if (messagesGenerating === true) {
+        executeSlashCommands("/echo Memory Generation in progress.. Please wait..")
+        while(messagesGenerating){
+            //wait 5 seconds before checking again.
+            await new Promise((r) => setTimeout(r, 5000));
+        }
+    }
+
+    let context = getContext();
+    let messagesGenerated = await ensureMemoriesGenerated();
+
+    if (messagesGenerating === true) {
+        executeSlashCommands("/echo Memory Generation in progress.. Please wait..")
+        while(messagesGenerating){
+            //wait 5 seconds before checking again.
+            await new Promise((r) => setTimeout(r, 5000));
+        }
+    }
+
+    //if nothing's generate, then just move on. No need to do anything.
+    if (messagesGenerated === false) {
+        console.log("BETTER MEMORY - Message update - No memories.");
+        return -1;
+    }
+
+    //wait if current gen is in progress.
+    if (!is_send_press && !inApiCall) {
+        console.log("BETTER MEMORY - Message Update - No current generation in progress.");
+        inApiCall = true;
+        console.log("BETTER MEMORY - Message Update Triggered. Would have fetched memories.");
+    }
+
+    console.log("BETTER MEMORY - Somehow made it to the end?");
+    return -1;
+});
+
+//method to ensure that messages have been generated, so that we don't try to fetch memories that don't exist.
+const ensureMemoriesGenerated = async() => {
+    const sourcepath = '../../../../worlds/';
+    const lorebook_name = getLorebookName();
+
+    //try to load the Lorebook
+    try {
+        await fetch(sourcepath + lorebook_name + ".json").then(response => response.json()).then(data => {
+            console.log("BETTER MEMORY - Lorebook Loaded: ", data);
+        });
+    }catch(e){
+        console.log("BETTER MEMORY - Lorebook not found.");
+        return false;
+    }
+
+    //try to load the blocks_hashed entry if lorebook exists
+    try {
+        await getLorebookContent("blocks_hashed").then((data) => {
+            console.log("BETTER MEMORY - Found Entry for blocks_hashed: ", JSON.stringify(data));
+        });
+        return true;
+    }catch(e){
+        console.log("BETTER MEMORY - No Entry Found for blocks_hashed. Has generation completed?: ", e);
+        return false;
+    }
+}
+
+
 
 const onLocateMemories = async(msgPrompt) => {
     //keyword generation
@@ -202,7 +285,15 @@ const summarizeBlockData = async(msgBlock) => {
         console.log("BETTER MEMORY - No Hashes Loaded: ", e);
     }
 
+    //check if memories are up to date, and if so, skip generation.
+    let msg_hash = getStringHash(msg[msg.length-1]);
+    if (loaded_hashes.includes(msg_hash.toString())){
+        await executeSlashCommands("/echo \"Memories up to date.\"");
+        return;
+    }
 
+    //notify the end user that the process has started.
+    await executeSlashCommands("/echo \"Generating Memories...\nThis will take a while to complete.\"")
 
     //process each block in msgBlock
     for(let block_index = 0; block_index < msg.length; block_index++){
@@ -294,6 +385,7 @@ const summarizeBlockData = async(msgBlock) => {
 
             console.log("BETTER MEMORY - Block Summarized: "+msg[block_index]+"\nBlock Summary: \n"+result_dict[block_index.toString()+"_summary"] )
             result.push("Block_"+block_index.toString());
+            result.push(", "+block_hash.toString());
             saveDataToWorldInfo(result, summary);
 
             //reset result and events for next block
@@ -324,16 +416,30 @@ const summarizeBlockData = async(msgBlock) => {
             console.log("BETTER MEMORY - No Entry Found for blocks_hashed: ", e);
         }
         if (UID !== null) {
-            console.log("BETTER MEMORY - Updating blocks_hashed: ", blocks_hashed);
-            await executeSlashCommands("/setentryfield file=" + getLorebookName() + " uid="+UID.toString()+" field=content " + loaded_hashes.join("\n"));
+            console.log("BETTER MEMORY - Updating blocks_hashed: ", blocks_hashed);;
             await updateLorebookContent(UID);
-            await getLorebookContent("blocks_hashed", true).then((data) => {    console.log(JSON.stringify(data))});
+            await getLorebookContent("blocks_hashed", true).then((data) => {
+                console.log(JSON.stringify(data))
+                //update loaded hashes with the new value.
+                loaded_hashes = data[0].content.split("\n");
+                //reset blocks_hashed
+                blocks_hashed = [];
+            });
         }else{
             console.log("BETTER MEMORY - No uid found! Creating blocks_hashed: ", blocks_hashed, "Current UID: ", UID );
             await executeSlashCommands("/createentry file=" + getLorebookName() + " key=\"blocks_hashed\" " + loaded_hashes.join("\n"));
+            await getLorebookContent("blocks_hashed", true).then((data) => {
+                console.log(JSON.stringify(data))
+                //update loaded hashes with the new value.
+                loaded_hashes = data[0].content.split("\n");
+                //reset blocks_hashed
+                blocks_hashed = [];
+            });
         }
+        await executeSlashCommands("/echo \"Memories Generated.\"");
     }else{
         console.log("BETTER MEMORY - No blocks hashed. Skipping save to WI.")
+        await executeSlashCommands("/echo \"No Memories Generated.\"");
     }
 }
 
@@ -385,14 +491,32 @@ const getLorebookContent = async(keyword, content=true) => {
 const updateLorebookContent = async(updated_object) => {
     const sourcepath = '../../../../worlds/';
     let world_info="";
+    let last_load = "a";
 
     //get uid from updated object
     let uid = updated_object.uid;
+    let loop_counter = 1;
 
-    console.log("BETTER MEMORY - Updating... Loading Lorebook for : ", getLorebookName());
-    await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(data => {
-        world_info = data;
-    });
+    console.log("Verifying all changes complete to Lorebook, before starting. To prevent data loss");
+    while(last_load !== world_info && loop_counter < 15){
+        world_info = await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(data => {
+            return data;
+        });
+
+        //wait 3 seconds before setting last_load to the current value of Lorebook.
+        await new Promise((r) => setTimeout(r, 3000));
+
+        console.log("BETTER MEMORY - Updating... Waiting for Lorebook to update. Loop: ", loop_counter);
+
+        last_load = await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(data => {
+            return data;
+        });
+
+        loop_counter++;
+    }
+
+
+    console.log("BETTER MEMORY - Updating... Loading Lorebook for : ", getLorebookName(), " - ",  ()=>{const d =new Date(); d.toLocaleTimeString()} );
 
     //skip if lorebook isn't found.
     if (world_info === "") {
@@ -408,11 +532,48 @@ const updateLorebookContent = async(updated_object) => {
     }
 
     console.log("BETTER MEMORY - Updating... Saving Lorebook for : ", getLorebookName());
-    await fetch('/api/worldinfo/edit', {
+    console.log("BETTER MEMORY - Updated Lorebook Content: ", JSON.stringify(world_info));
+
+    debounce(await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: getLorebookName(), data: world_info }),
-    });
+    }).then((response)=>response.json()).then((data)=>{
+        console.log("Returned from saving WI: ", JSON.stringify(data));
+    }), 3000);
+
+    let data_result ={};
+    let retry_count = 0;
+
+    //keep resubmitting the save until the data is updated.
+    while (data_result !== world_info && retry_count < 5){
+        console.log("BETTER MEMORY - Lorebook Wasn't updated, resaving!");
+
+        await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(async(data) => {
+            data_result = data;
+        });
+
+        //save the lorebook again. Appararently it misses sometimes.
+        debounce(await fetch('/api/worldinfo/edit', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: getLorebookName(), data: world_info }),
+        }).then((response)=>response.json()).then((data)=>{
+            console.log("Returned from saving WI: ", JSON.stringify(data));
+        }), 7000);
+
+        //wait 7 seconds before checking again.
+        await new Promise((r) => setTimeout(r, 7000));
+
+        retry_count++;
+    };
+
+    if (data_result !== world_info) {
+        console.log("BETTER MEMORY - Lorebook hashes weren't updated after 3 retries. Giving up.");
+        executeSlashCommands("/echo Data was updated, but hashes couldn't be saved.");
+        const lorebookname = getLorebookName();
+        executeSlashCommands("/send [BETTER MEMORY]\n\nVerify or Update these hashes to the blocks_hashed entry in the \""+lorebookname+"\" Lorebook manually to prevent duplication:\n\n"+updated_object.content);
+    }
 }
 
 const getLorebookName = () => {
@@ -704,7 +865,7 @@ jQuery(async () => {
     $("#extensions_settings").append(settingsHtml);
 
     // These are examples of listening for events
-    $("#genmem_button").on("click", onSummarizeMemories);
+    $("#genmem_button").on("click", onSummarize);
     $("#locmem_button").on("click", onFindMemories);
     // $("#rake_setting").on("input", onExampleInput);
 
@@ -712,8 +873,8 @@ jQuery(async () => {
     loadSettings();
 
     // listeners
-    eventSource.on(event_types.MESSAGE_SENT, onMessageUpdate);
-    eventSource.on(event_types.MESSAGE_SWIPED, onMessageUpdate);
+    eventSource.on(event_types.MESSAGE_SENT, onNewMessageGenerated);
+    eventSource.on(event_types.MESSAGE_SWIPED, onNewMessageGenerated);
 });
 
 
