@@ -1,7 +1,7 @@
 import { getContext, extension_settings} from '../../../extensions.js';
-import { generateRaw, getRequestHeaders, is_send_press, main_api } from '../../../../script.js';
+import { generateRaw, getRequestHeaders, is_send_press, main_api, eventSource, event_types, saveSettings } from '../../../../script.js';
 import { executeSlashCommands } from '../../../slash-commands.js';
-import { getStringHash } from '../../../utils.js';
+import { getStringHash, debounce } from '../../../utils.js';
 
 // Keep track of where your extension is located, name should match repo name
 const extensionName = "better_memory";
@@ -34,13 +34,20 @@ const onSummarizeMemories = async() => {
     await executeSlashCommands("/echo \"Generating Memories... Please avoid generation till complete.\"")
     await summarizeBlockData(msgBlock);
     await executeSlashCommands("/echo \"Memories Generated.\"");
-    //context.chat.splice(messages.length-3, 2);
 };
 
 
 const onFindMemories = async() => {
     let resp = await onLocateMemories("Lilith sits down next to Dirge by a campfire in ancient ruins.");
 }
+
+const onMessageUpdate = async() => {
+    //test that this actually delays generation. Wait 30 seconds.
+    console.log("BETTER MEMORY - Message Update Triggered.");
+    await new Promise((r) => setTimeout(r, 30000));
+    console.log("BETTER MEMORY - Returning to Generation after 30 seconds.");
+    debounce(() => saveSettings(), 1000);
+};
 
 const onLocateMemories = async(msgPrompt) => {
     //keyword generation
@@ -466,7 +473,8 @@ const saveDataToWorldInfo = async(eventArray, summary) => {
 
     await executeSlashCommands("/createentry file="+lorebook_name+" key=\""+keywords+"\" "+summary);
 
-    await executeSlashCommands("/createentry file="+lorebook_name+" key=\"memoryKeywords\" "+keywords);
+    //No longer necessary. Was originally planned to be used to store all events simultaneously, but I'm going to try without it for the time being. I'll leave it here in case I need it later.
+    // await executeSlashCommands("/createentry file="+lorebook_name+" key=\"memoryKeywords\" "+keywords);
     console.log("BETTER MEMORY - Lorebook Created for : ", lorebook_name);
 
     //verify last entry exists
@@ -702,4 +710,10 @@ jQuery(async () => {
 
     // Load settings when starting things up (if you have any)
     loadSettings();
+
+    // listeners
+    eventSource.on(event_types.MESSAGE_SENT, onMessageUpdate);
+    eventSource.on(event_types.MESSAGE_SWIPED, onMessageUpdate);
 });
+
+

@@ -24,19 +24,19 @@ Effectively this means that it's going to determine that the most appropriate hi
 
 For example, if you were writing a combat scene, and it searched through relevant messages, the most likely candidates would be other similar combat scenes, because they are the most semantically similar to the input.
 
-So, rather than searching for messages that are semantically similar to the prompt, this extension takes the prompt, and extracts keywords from it, then searches through the existing messages for those keywords, and returns the most relevant hits.
-
-This allows it to return messages that have details relevant to context (much like a search engine), rather than messages that look like the one you're sending.
 
 > Theoretically somewhere down the line this could be used to generate lorebooks from files as well.
+
+
 
 ## Features
 
 - Iterative summaries of the chat that can be triggered both through the tool and externally.
-- A better use for Vector Search. 
+- A better use for Vector Search. (Essentially Fuzzy Search, which is what Semantic similarity excels at.)
 - More consistent responses from your Characters. No more goldfish Memory.
 - A more robust way to handle long term memory.
 - It's super cool to see an event log of your RP. :D 
+- Long term storage of story summaries taken iteratively. Essentially checkpoints of the story.
 
 ## Downsides
 - Generating summaries and events is slow. Which is why they're persisted to world info. This can take several minutes to run through your chat since it requires multiple passes through generation to create.
@@ -49,8 +49,11 @@ This allows it to return messages that have details relevant to context (much li
 ## Installation and Usage
 
 ### Installation
-- Ensure that you have installed the latest version of SillyTavern's Extra's API.
-- You'll need to run my Vector API extension which contains some endpoints to hit chroma and RAKE for keyword extraction. (I may fix this later on, but for now it's a dependency.)
+- Install the Extension from the SillyTavern Extension Manager.
+- You'll need to run my Vector API extension which contains some endpoints to hit chroma and RAKE for keyword extraction. (I may fix this later on, but for now it's a dependency.) [LVAK](https://github.com/Nexus333/LVAK)
+- Ensure LVAK is running before you trigger the extension. (Needed for Keyword Extraction, and vector comparison.)
+- Ensure that you are connected to an API. 
+- Ensure that you are in a chat. 
 
 ### Usage
 
@@ -68,9 +71,15 @@ This allows it to return messages that have details relevant to context (much li
 ## Support and Contributions
 
 *Where should someone ask for support?*
-I mainly just build stuff for myself, but figured others might want to give it a try. If you have questions, you can ask me on the SillyTavern Discord. I'm pretty busy, but I'll probably get back to you eventually.
+
+I mainly just build stuff for myself, but figured others might want to give it a try. 
+
+If you have questions, you can ask me on the SillyTavern Discord. 
+
+I'm pretty busy, but I'll probably get back to you eventually.
 
 *How can people help add to this extension?*
+
 Whatever works. :shrug:
 
 ## License
