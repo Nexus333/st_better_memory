@@ -28,12 +28,13 @@ async function loadSettings() {
 const onSummarizeMemories = async() => {
     let context = getContext();
     const messages = context.chat;
-    await executeSlashCommands("/send \"Generating Memories... Please avoid generation till complete.\"")
     let msgBlock = grabMessageBlock();
-    await summarizeBlockData(msgBlock);
-    await executeSlashCommands("/send \"Memories Generated.\"");
-    context.chat.splice(messages.length-3, 2);
 
+    //notify the end user that the process has started.
+    await executeSlashCommands("/echo \"Generating Memories... Please avoid generation till complete.\"")
+    await summarizeBlockData(msgBlock);
+    await executeSlashCommands("/echo \"Memories Generated.\"");
+    //context.chat.splice(messages.length-3, 2);
 };
 
 
@@ -170,7 +171,6 @@ const generateRakeKeywords = async(message, removeCharacterNames=true) => {
     return data;
 }
 
-
 const summarizeBlockData = async(msgBlock) => {
     let msg = msgBlock;
     //For Testing purposes, only summarize the first block.
@@ -194,6 +194,8 @@ const summarizeBlockData = async(msgBlock) => {
     }catch(e){
         console.log("BETTER MEMORY - No Hashes Loaded: ", e);
     }
+
+
 
     //process each block in msgBlock
     for(let block_index = 0; block_index < msg.length; block_index++){
@@ -302,7 +304,29 @@ const summarizeBlockData = async(msgBlock) => {
             loaded_hashes.push(blocks_hashed[i]);
         }
         //save loaded hashes to WI
-        await executeSlashCommands("/createentry file=" + getLorebookName() + " key=\"blocks_hashed\" " + loaded_hashes.join("\n"));
+        //check if the entry exists
+        let UID = null;
+        try{
+            await getLorebookContent("blocks_hashed").then((data) => {
+                console.log("UID DATA: ", JSON.stringify(data));
+                data[0].content = loaded_hashes.join("\n");
+                UID = data[0];
+            });
+            console.log("BETTER MEMORY - Found Entry for blocks_hashed: ", JSON.stringify(UID));
+        }catch(e){
+            console.log("BETTER MEMORY - No Entry Found for blocks_hashed: ", e);
+        }
+        if (UID !== null) {
+            console.log("BETTER MEMORY - Updating blocks_hashed: ", blocks_hashed);
+            await executeSlashCommands("/setentryfield file=" + getLorebookName() + " uid="+UID.toString()+" field=content " + loaded_hashes.join("\n"));
+            await updateLorebookContent(UID);
+            await getLorebookContent("blocks_hashed", true).then((data) => {    console.log(JSON.stringify(data))});
+        }else{
+            console.log("BETTER MEMORY - No uid found! Creating blocks_hashed: ", blocks_hashed, "Current UID: ", UID );
+            await executeSlashCommands("/createentry file=" + getLorebookName() + " key=\"blocks_hashed\" " + loaded_hashes.join("\n"));
+        }
+    }else{
+        console.log("BETTER MEMORY - No blocks hashed. Skipping save to WI.")
     }
 }
 
@@ -332,7 +356,7 @@ const getLorebookContent = async(keyword, content=true) => {
     });
     console.log("BETTER MEMORY - Lorebook Content for : ", lorebook_name, " : ", world_info)
     for (const [key, value] of Object.entries(world_info.entries)) {
-        console.log("BETTER MEMORY - Checking WI for keyword: ", keyword, "at key: ", key);
+        //console.log("BETTER MEMORY - Checking WI for keyword: ", keyword, "at key: ", key);
         let keyArray = value.key;
         //iterate through the keys to check if the keyword is present.
         for (let i = 0; i < keyArray.length; i++) {
@@ -351,17 +375,44 @@ const getLorebookContent = async(keyword, content=true) => {
     return hits;
 }
 
+const updateLorebookContent = async(updated_object) => {
+    const sourcepath = '../../../../worlds/';
+    let world_info="";
+
+    //get uid from updated object
+    let uid = updated_object.uid;
+
+    console.log("BETTER MEMORY - Updating... Loading Lorebook for : ", getLorebookName());
+    await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(data => {
+        world_info = data;
+    });
+
+    //skip if lorebook isn't found.
+    if (world_info === "") {
+        console.log("BETTER MEMORY - Updating... No Lorebook Found for : ", getLorebookName());
+        return;
+    }
+
+    console.log("BETTER MEMORY - Updating... Updating lorebook entry at UID: ", uid.toString());
+    for(let [key, value] of Object.entries(world_info.entries)){
+        if(value.uid === uid){
+            world_info.entries[key] = updated_object;
+        }
+    }
+
+    console.log("BETTER MEMORY - Updating... Saving Lorebook for : ", getLorebookName());
+    await fetch('/api/worldinfo/edit', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name: getLorebookName(), data: world_info }),
+    });
+}
+
 const getLorebookName = () => {
     const context = getContext();
     let chat_id = context.chatId;
     const lorebook_name = chat_id.replace("-", "_").replaceAll(" ", "").replace(new RegExp("\@.*$", ""), "")+"_memories";
     return lorebook_name;
-}
-
-const getEntryUID = async(keyword) => {
-    let UID = await(executeSlashCommands("/findentry file="+getLorebookName()+" field=key \""+keyword+"\""));
-    console.log("BETTER MEMORY - UUID Set to ", UID, " for keyword: ", keyword);
-    return UID;
 }
 
 const getSceneCharacters = async() => {
