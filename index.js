@@ -147,8 +147,27 @@ const getEventLog = async(_, input) => {
 
         let key_list =  data[0].key;
         let event_string = "";
+        if (key_list.length === 1){
+            key_list = key_list[0].split(",");
+
+            //filter out empty entries.
+            key_list = key_list.filter((el)=> {
+                if (el.length > 2){
+                    return el;
+                }
+            });
+        }
+
+        //console.log("BETTER MEMORY - Second to Last Entry: ", key_list[key_list.length - 2]);
+
+        //remove the last two entries, which are the block number and hash.
+        if (new RegExp("Block_[0-9]+").test(key_list[key_list.length - 2])){
+            //console.log("BETTER MEMORY - removing last two entries in eventlog.");
+            key_list.splice(key_list.length - 2, 2);
+        }
+
         for (let i = 0; i < key_list.length; i++) {
-            console.log("BETTER MEMORY - Key: ", key_list[i]);
+            //console.log("BETTER MEMORY - Key: ", key_list[i]);
             if (key_list[i] !== "Block_"+input){
                 //ensure that key isn't a string of numbers.
                 if (!new RegExp("^[0-9]*$", "g").test(key_list[i])){
@@ -453,6 +472,7 @@ const summarizeBlockData = async(msgBlock) => {
     //process each block in msgBlock
     for(let block_index = 0; block_index < msg.length; block_index++){
         //console.log("BETTER MEMORY - Summarizing Block: ", msg[block_index])
+        await executeSlashCommands("/echo \"Summarizing Block: "+(block_index+1)+" of "+msg.length);
         let block_hash = getStringHash(msg[block_index]);
         //check if the block has already been summarized.
         if (loaded_hashes.includes(block_hash.toString())){
@@ -524,7 +544,7 @@ const summarizeBlockData = async(msgBlock) => {
                                 if(summary_list[summary_index].split(" ").length > 3) {
                                     //make sure I'm not adding instructions or contextual information.
                                     if (!new RegExp("###|[\[\]]", "g").test(summary_list[summary_index])){
-                                        result.push(summary_list[summary_index].replace ("- ", "").replaceAll('*', ""));
+                                        result.push(summary_list[summary_index].replace ("- ", "").replaceAll('*', "").replaceAll("\"", "'"));
                                     }
                                 }
                             }
@@ -1004,13 +1024,13 @@ jQuery(async () => {
                 <div class="example-extension_block flex-container">
                     <input id="genmem_button" class="menu_button" type="submit" value="Generate Memories" />
                 </div>
-                <div class="example-extension_block flex-container">
-                    <input id="locmem_button" class="menu_button" type="submit" value="Locate Memories" />
-                </div>
-                <div class="example-extension_block flex-container">
-                    <input id="rake_setting" type="checkbox" />
-                    <label for="rake_setting">Use Rake For Keyword Extraction</label>
-                </div>
+<!--                <div class="example-extension_block flex-container">-->
+<!--                    <input id="locmem_button" class="menu_button" type="submit" value="Locate Memories" />-->
+<!--                </div>-->
+<!--                <div class="example-extension_block flex-container">-->
+<!--                    <input id="rake_setting" type="checkbox" />-->
+<!--                    <label for="rake_setting">Use Rake For Keyword Extraction</label>-->
+<!--                </div>-->
 
                 <hr class="sysHR" />
             </div>
@@ -1021,7 +1041,7 @@ jQuery(async () => {
 
     // These are examples of listening for events
     $("#genmem_button").on("click", onSummarize);
-    $("#locmem_button").on("click", onFindMemories);
+    // $("#locmem_button").on("click", onFindMemories);
     // $("#rake_setting").on("input", onExampleInput);
 
     // Load settings when starting things up (if you have any)
@@ -1037,6 +1057,7 @@ jQuery(async () => {
     registerSlashCommand("blocksum", getBlockSummary, ["chunksum", "chunksummary"], "Loads the summary for a specific chunk into chat. /blocksum 0", true, true);
     registerSlashCommand("blockevents", getEventLog, ["eventlog", "chunkevents"], "Loads the list of events that happened for a chunk of chat and adds them in. /eventlog 0", true, true);
     registerSlashCommand("listblocks", listBlockCount, ["blockcount"], "Lists the number of current blocks in the chat.", true, true);
+    registerSlashCommand("genmem", SummarizeMemories, ["genmemories"], "Generates memories based on the current chat. Will generate summaries for any blocks that have changed or been updated since the last run. /genmem", true, true);
 });
 
 

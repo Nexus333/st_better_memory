@@ -67,15 +67,13 @@ For example, if you were writing a combat scene, and it searched through relevan
 7. You can trigger the event log for a given block number using `/eventlog {block number}`. i.e. `/eventlog 1`
 8. You can trigger the last summary it generated that it finds using `/lastsum`.
 8. You can see the number of blocks that exist in the chat (not what's been generated) using `/blockcount`
+9. You can run `/genmem` from the prompt to generate any new memories. If this is the first time, it will get all memories in the chat. Note: This will block generation until it's finished, but it lets ou know where progress is at.
 7. Profit???
 
 ### Tips and Tricks
 - If you don't like the summaries that are being generated, you can delete that specific block and the corresponding hash in blocks_hashed. On the next generation, it will regenerate the summary for that block.
 
-## TODO - Maybe.. 
-- Slash command to generate memories.
-- Slash command to list out events for a given block. 
-- Slash command to grab the summary for a given block.
+## TODO - Maybe..
 - inject quietly into prompt
 - allow to inject on every generation. (Not sure if this is a good idea.)
 
