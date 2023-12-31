@@ -62,8 +62,12 @@ For example, if you were writing a combat scene, and it searched through relevan
 2. Select an existing chat. This summaries in chunks of User / Responses. So if you don't have any data or little data, it's probably going to do something dumb. I haven't really tested it on small datasets. 
 3. Click the "Generate Memories" button.
 4. Wait for it to finish. (This can take a while.)
-5. When you want to trigger a summary, run the slash command `/findmem {Normal character chat}`,  where prompt is the prompt you want to generate a response for. i.e. `/findmem Remember that time we were chased by a dragon?`
-6. Profit???
+5. When you want to trigger a summary, run the slash command `/findmem {Normal character chat}`,  where prompt is the prompt you want to generate a response for. i.e. `/findmem Remember that time we were chased by a dragon?` (only one that requires LVAK. Manual triggers work like normal.)
+6. You can trigger memories directly by listing the block number using `/blocksum {block number}`. i.e. `/blocksum 1`
+7. You can trigger the event log for a given block number using `/eventlog {block number}`. i.e. `/eventlog 1`
+8. You can trigger the last summary it generated that it finds using `/lastsum`.
+8. You can see the number of blocks that exist in the chat (not what's been generated) using `/blockcount`
+7. Profit???
 
 ### Tips and Tricks
 - If you don't like the summaries that are being generated, you can delete that specific block and the corresponding hash in blocks_hashed. On the next generation, it will regenerate the summary for that block.
@@ -78,6 +82,7 @@ For example, if you were writing a combat scene, and it searched through relevan
 ## Known Issues
 - On first creation, may have to refresh page before WI is visible in list. 
 - Sometimes it fails to update the hashes for the blocks after generating memories, when this occurs, it will leave a message with the expected hashes in chat, so you can verify / update manually if necessary.
+- deleting stuff and editing needs to be done manually, due to the bits of WI that are accessible programmatically.
 
 ## Prerequisites
 

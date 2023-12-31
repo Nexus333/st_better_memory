@@ -49,11 +49,133 @@ const SummarizeMemories = async() => {
     setSendButtonState(false);
 };
 
-const onTriggerMemory = async() => {
-    excuteSlashCommands('/send {{input}}');
+const postLastSummary = async() => {
+    if (ensureMemoriesGenerated() === false){
+        await executeSlashCommands("/echo Generate Memories before searching.");
+        return -1;
+    }
+
+    let hashes = await getLorebookContent("blocks_hashed", true).then((data) => {
+        console.log("Last summary loaded hashes: ", JSON.stringify(data))
+        return data[0].content.split("\n");
+    });
+
+    let last_hash = hashes[hashes.length-1];
+
+    console.log("BETTER MEMORY - Last Summary Hash: ", last_hash);
+    let summary_content = await getLorebookContent(last_hash, true).then(async(data) => {
+        console.log(JSON.stringify(data))
+
+        if(data !== undefined){
+            if (data.length > 1){
+                return data[0].content;
+            }
+        }
+
+        return undefined;
+    });
+
+    if (summary_content === undefined){
+        try {
+            //iterate through Block entries to find the most recent summary. This is a fallback in case the hashes are out of sync.
+            for (let i = hashes.length; i > 0; i--) {
+                console.log("BETTER MEMORY - Fallback: Searching for Summary in Block_"+i.toString());
+                await getLorebookContent("Block_"+(i).toString(), true).then((data) => {
+                    console.log(JSON.stringify(data))
+                    if (data !== undefined) {
+                        if (data.length > 0) {
+                            summary_content = data[0].content;
+                        }
+                    }
+                });
+
+                if (summary_content !== undefined) {
+                    break;
+                }
+            }
+        }catch(e){
+            console.log("BETTER MEMORY - No Summary Found in fallback: ", e);
+        }
+    }
+
+    if (summary_content !== undefined) {
+        await executeSlashCommands("/sys [Last Summary: " + summary_content + "]");
+    }else {
+        await executeSlashCommands("/echo Unable to locate last Summary.");
+    }
+}
+
+const getBlockSummary = async(_, input) => {
+    if (ensureMemoriesGenerated() === false){
+        await executeSlashCommands("/echo Generate Memories before searching.");
+        return -1;
+    }
+
+    let summary_content = await getLorebookContent("Block_"+input, true).then(async(data) => {
+        console.log(JSON.stringify(data))
+        if (data.length < 1){
+            await executeSlashCommands("/echo Unable to retrieve summary.");
+            return -1;
+        }
+        return data[0].content;
+    });
+
+    if (summary_content === -1){
+        return;
+    }
+    await executeSlashCommands("/sys [Summary:'\n"+summary_content+"\n]");
+}
+
+const getEventLog = async(_, input) => {
+    if (ensureMemoriesGenerated() === false){
+        await executeSlashCommands("/echo Generate Memories before searching.");
+        return -1;
+    }
+
+    let summary_content = await getLorebookContent("Block_"+input, true).then(async(data) => {
+        console.log(JSON.stringify(data))
+        if (data === undefined){
+            await executeSlashCommands("/echo Unable to locate events.");
+            return -1;
+        }
+
+        if (data.length < 1){
+            await executeSlashCommands("/echo Unable to locate events.");
+            return -1;
+        }
+
+
+        let key_list =  data[0].key;
+        let event_string = "";
+        for (let i = 0; i < key_list.length; i++) {
+            console.log("BETTER MEMORY - Key: ", key_list[i]);
+            if (key_list[i] !== "Block_"+input){
+                //ensure that key isn't a string of numbers.
+                if (!new RegExp("^[0-9]*$", "g").test(key_list[i])){
+                    event_string += (i+1).toString()+". "+key_list[i]+"\n";
+                }
+            }
+        }
+        return event_string;
+    });
+
+    if (summary_content === -1){
+        return;
+    }
+    await executeSlashCommands("/sys [Previous events at "+input+":\n"+summary_content+"\n]");
+}
+
+const listBlockCount = async() => {
+    let blocks = grabMessageBlock();
+    await executeSlashCommands("/echo Block Count: "+blocks.length);
 }
 
 const onFindMemories = async(_, input) => {
+    if (ensureMemoriesGenerated() === false){
+        await executeSlashCommands("/echo Generate Memories before searching.");
+        return -1;
+    }
+
     console.log("BETTER MEMORY - Finding Memories for Message: ", input);
     let resp = await onLocateMemories(input);
     console.log("BETTER MEMORY - Found Memories: ", resp[0].content);
@@ -158,6 +280,10 @@ const ensureMemoriesGenerated = async() => {
 
 
 const onLocateMemories = async(msgPrompt) => {
+    if (ensureMemoriesGenerated() === false){
+        await executeSlashCommands("/echo Generate Memories before searching.");
+        return -1;
+    }
     //keyword generation
     let rake_keys = [];
     let llm_keys = [];
@@ -906,7 +1032,11 @@ jQuery(async () => {
     // eventSource.on(event_types.MESSAGE_SWIPED, onNewMessageGenerated);
 
     //slash commands
-    registerSlashCommand("findmemory", onFindMemories, ["findmem", "getmem"], "Finds a memory based on the input that the user submits, and loads the summary into chat.", true, true);
+    registerSlashCommand("findmemory", onFindMemories, ["findmem", "getmem"], "Finds a memory based on the input that the user submits, and loads the summary into chat. Requires LVAK. /findmem (normal prompt)", true, true);
+    registerSlashCommand("lastsummary", postLastSummary, ["lastsum"], "Finds the latest summary and adds it into chat. /lastsum", true, true);
+    registerSlashCommand("blocksum", getBlockSummary, ["chunksum", "chunksummary"], "Loads the summary for a specific chunk into chat. /blocksum 0", true, true);
+    registerSlashCommand("blockevents", getEventLog, ["eventlog", "chunkevents"], "Loads the list of events that happened for a chunk of chat and adds them in. /eventlog 0", true, true);
+    registerSlashCommand("listblocks", listBlockCount, ["blockcount"], "Lists the number of current blocks in the chat.", true, true);
 });
 
 
