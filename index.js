@@ -1,6 +1,6 @@
 import { getContext, extension_settings, ModuleWorkerWrapper } from '../../../extensions.js';
 import { generateRaw, getRequestHeaders, is_send_press, main_api, eventSource, event_types, saveSettings, saveChat, setSendButtonState } from '../../../../script.js';
-import { executeSlashCommands } from '../../../slash-commands.js';
+import { executeSlashCommands, registerSlashCommand } from '../../../slash-commands.js';
 import { getStringHash, debounce } from '../../../utils.js';
 
 // Keep track of where your extension is located, name should match repo name
@@ -10,6 +10,7 @@ const extensionSettings = extension_settings[extensionName];
 const defaultSettings = {};
 let inApiCall = false;
 let messagesGenerating = false;
+
 
 // Loads the extension settings if they exist, otherwise initializes them to the defaults.
 async function loadSettings() {
@@ -48,9 +49,23 @@ const SummarizeMemories = async() => {
     setSendButtonState(false);
 };
 
+const onTriggerMemory = async() => {
+    excuteSlashCommands('/send {{input}}');
+}
 
-const onFindMemories = async() => {
-    let resp = await onLocateMemories("Lilith sits down next to Dirge by a campfire in ancient ruins.");
+const onFindMemories = async(_, input) => {
+    console.log("BETTER MEMORY - Finding Memories for Message: ", input);
+    let resp = await onLocateMemories(input);
+    console.log("BETTER MEMORY - Found Memories: ", resp[0].content);
+    if (resp !== "") {
+        await executeSlashCommands("/send "+input);
+        await executeSlashCommands("/sys [Previously: "+resp[0].content+"]");
+        await executeSlashCommands("/trigger");
+    } else {
+        await executeSlashCommands("/echo No matching memories found.");
+        await executeSlashCommands("/send "+input);
+        await executeSlashCommands("/trigger");
+    }
 }
 
 // const onMessageUpdate = async() => {
@@ -64,44 +79,54 @@ const onFindMemories = async() => {
 //function called when the summarize button is pressed. Debounced to prevent multiple calls.
 const onSummarize = debounce(async() => await SummarizeMemories(), 500);
 
-const onNewMessageGenerated = debounce(async() => {
-    console.log("BETTER MEMORY - Message Update Triggered.");
+//Chat freaking out when I try to use this. Disabling for now. Will use slash commands in the meantime.
 
-    if (messagesGenerating === true) {
-        executeSlashCommands("/echo Memory Generation in progress.. Please wait..")
-        while(messagesGenerating){
-            //wait 5 seconds before checking again.
-            await new Promise((r) => setTimeout(r, 5000));
-        }
-    }
-
-    let context = getContext();
-    let messagesGenerated = await ensureMemoriesGenerated();
-
-    if (messagesGenerating === true) {
-        executeSlashCommands("/echo Memory Generation in progress.. Please wait..")
-        while(messagesGenerating){
-            //wait 5 seconds before checking again.
-            await new Promise((r) => setTimeout(r, 5000));
-        }
-    }
-
-    //if nothing's generate, then just move on. No need to do anything.
-    if (messagesGenerated === false) {
-        console.log("BETTER MEMORY - Message update - No memories.");
-        return -1;
-    }
-
-    //wait if current gen is in progress.
-    if (!is_send_press && !inApiCall) {
-        console.log("BETTER MEMORY - Message Update - No current generation in progress.");
-        inApiCall = true;
-        console.log("BETTER MEMORY - Message Update Triggered. Would have fetched memories.");
-    }
-
-    console.log("BETTER MEMORY - Somehow made it to the end?");
-    return -1;
-});
+// const onNewMessageGenerated = debounce(async(data) => {
+//     console.log("BETTER MEMORY - Message Update Triggered.");
+//
+//     if (messagesGenerating === true) {
+//         executeSlashCommands("/echo Memory Generation in progress.. Please wait..")
+//         while(messagesGenerating){
+//             //wait 5 seconds before checking again.
+//             await new Promise((r) => setTimeout(r, 5000));
+//         }
+//     }
+//
+//     let context = getContext();
+//     let messagesGenerated = await ensureMemoriesGenerated();
+//
+//     if (messagesGenerating === true) {
+//         executeSlashCommands("/echo Memory Generation in progress.. Please wait..")
+//         while(messagesGenerating){
+//             //wait 5 seconds before checking again.
+//             await new Promise((r) => setTimeout(r, 5000));
+//         }
+//     }
+//
+//     //if nothing's generate, then just move on. No need to do anything.
+//     if (messagesGenerated === false) {
+//         console.log("BETTER MEMORY - Message update - No memories.");
+//         return -1;
+//     }
+//
+//     //wait if current gen is in progress.
+//     if (!inApiCall) {
+//         console.log("BETTER MEMORY - Message Update - No current generation in progress.");
+//         inApiCall = true;
+//         let chat = context.chat;
+//         console.log("BETTER MEMORY - Getting Last message: " + chat[chat.length - 2].mes, "Context: ", context);
+//         let prompt = chat[chat.length - 2].mes;
+//         console.log("BETTER MEMORY - Prompt: " + prompt);
+//         //wait for 30 seconds before generating memories.
+//         await new Promise((r) => setTimeout(r, 30000));
+//         await onFindMemories(prompt);
+//
+//         console.log("BETTER MEMORY - Message Update Triggered. Would have fetched memories.");
+//     }
+//
+//     console.log("BETTER MEMORY - Somehow made it to the end?");
+//     return -1;
+// });
 
 //method to ensure that messages have been generated, so that we don't try to fetch memories that don't exist.
 const ensureMemoriesGenerated = async() => {
@@ -139,10 +164,13 @@ const onLocateMemories = async(msgPrompt) => {
     let resultString = "";
     if (true) {
         rake_keys = await generateRakeKeywords(msgPrompt);
+        console.log("BETTER MEMORY - Rake Keys: ", rake_keys);
         llm_keys = await generateKeywordsFromLLM(msgPrompt, rake_keys);
-    }else{
-        llm_keys = await generateKeywordsFromLLM(msgPrompt);
+        if (llm_keys.length < 1) {
+            llm_keys = rake_keys;
+        }
     }
+
     console.log("BETTER MEMORY - Rake Keys: ", rake_keys);
     console.log("BETTER MEMORY - LLM Keys: ", llm_keys);
 
@@ -187,9 +215,6 @@ const generateKeywordsFromLLM = async(message, proposedKeywordsArray=[], removeC
     // Generation is in progress, summary prevented
     const prompt = "### Instruction:\n Generate 3 keywords or phrases from the following text as a comma separated list: "
     let keyword_list = "";
-    if (is_send_press) {
-        return;
-    }
 
     if (proposedKeywordsArray.length > 0){
         for (let i = 0; i < proposedKeywordsArray.length; i++) {
@@ -230,9 +255,6 @@ const generateKeywordsFromLLM = async(message, proposedKeywordsArray=[], removeC
 }
 
 const generateRakeKeywords = async(message, removeCharacterNames=true) => {
-    if (is_send_press) {
-        return;
-    }
     let data = [];
     await fetch('http://localhost:18000/keywordgen', {
         method: 'POST',
@@ -266,6 +288,13 @@ const summarizeBlockData = async(msgBlock) => {
     //For Testing purposes, only summarize the first block.
     // let msg =[];
     // msg.push(msgBlock[0]);
+    const context = getContext();
+    const chatId = context.chatId;
+
+    if (!chatId || !Array.isArray(context.chat)) {
+        console.debug('No chat selected.. Aborting Memory Generation.');
+        return -1;
+    }
 
     //console.log("BETTER MEMORY - Block to be Summarized:", msg);
     let result = [];
@@ -872,9 +901,12 @@ jQuery(async () => {
     // Load settings when starting things up (if you have any)
     loadSettings();
 
-    // listeners
-    eventSource.on(event_types.MESSAGE_SENT, onNewMessageGenerated);
-    eventSource.on(event_types.MESSAGE_SWIPED, onNewMessageGenerated);
+    // // listeners
+    // eventSource.on(event_types.MESSAGE_SENT, onNewMessageGenerated);
+    // eventSource.on(event_types.MESSAGE_SWIPED, onNewMessageGenerated);
+
+    //slash commands
+    registerSlashCommand("findmemory", onFindMemories, ["findmem", "getmem"], "Finds a memory based on the input that the user submits, and loads the summary into chat.", true, true);
 });
 
 

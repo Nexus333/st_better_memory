@@ -7,7 +7,7 @@ This extension re-implements the way long term memory is being handled.
 Rather than using a vector Database to search for appropriate data to return to context:
 
 1. You can generate memories from the chat log, by using your LLM to generate a list of discrete events and summaries for chat blocks.
-1. These are then stored to world info with the keys corresponding to the events (effectively memory triggers), and the summary as the content of the Lorebook.
+1. These are then stored to world info with the keys corresponding to the events (effectively memory triggers), with a summary as the content of the entry.
 1. When a prompt is made, the extension will extract keywords from the prompt, and search through the existing memories for the most relevant hits.
 1. If multiple hits are found, it will pass this to vector search to determine the most appropriate hit to return to context.
 1. Lastly, it injects the summary of the memory into the chat log, and returns it to context. 
@@ -26,7 +26,6 @@ For example, if you were writing a combat scene, and it searched through relevan
 
 
 > Theoretically somewhere down the line this could be used to generate lorebooks from files as well.
-
 
 
 ## Features
@@ -63,12 +62,26 @@ For example, if you were writing a combat scene, and it searched through relevan
 2. Select an existing chat. This summaries in chunks of User / Responses. So if you don't have any data or little data, it's probably going to do something dumb. I haven't really tested it on small datasets. 
 3. Click the "Generate Memories" button.
 4. Wait for it to finish. (This can take a while.)
-5. Hit the "Find Memories button when prompting."
+5. When you want to trigger a summary, run the slash command `/findmem {Normal character chat}`,  where prompt is the prompt you want to generate a response for. i.e. `/findmem Remember that time we were chased by a dragon?`
 6. Profit???
+
+### Tips and Tricks
+- If you don't like the summaries that are being generated, you can delete that specific block and the corresponding hash in blocks_hashed. On the next generation, it will regenerate the summary for that block.
+
+## TODO - Maybe.. 
+- Slash command to generate memories.
+- Slash command to list out events for a given block. 
+- Slash command to grab the summary for a given block.
+- inject quietly into prompt
+- allow to inject on every generation. (Not sure if this is a good idea.)
+
+## Known Issues
+- On first creation, may have to refresh page before WI is visible in list. 
+- Sometimes it fails to update the hashes for the blocks after generating memories, when this occurs, it will leave a message with the expected hashes in chat, so you can verify / update manually if necessary.
 
 ## Prerequisites
 
-* Latest is probably fine. Haven't checked older versions. :shrug:
+- Latest version of ST is fine (Haven't checked older versions.) :shrug:
 
 ## Support and Contributions
 
