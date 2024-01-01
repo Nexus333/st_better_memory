@@ -1,7 +1,7 @@
 import { getContext, extension_settings, ModuleWorkerWrapper } from '../../../extensions.js';
 import { generateRaw, getRequestHeaders, is_send_press, main_api, eventSource, event_types, saveSettings, saveChat, setSendButtonState } from '../../../../script.js';
 import { executeSlashCommands, registerSlashCommand } from '../../../slash-commands.js';
-import { getStringHash, debounce } from '../../../utils.js';
+import { getStringHash, debounce, uuidv4 } from '../../../utils.js';
 
 // Keep track of where your extension is located, name should match repo name
 const extensionName = "better_memory";
@@ -656,6 +656,7 @@ const summarizeBlockData = async(msgBlock) => {
                 blocks_hashed = [];
             });
         }
+        await updateLorebookNames();
         await executeSlashCommands("/echo \"Memories Generated.\"");
     }else{
         console.log("BETTER MEMORY - No blocks hashed. Skipping save to WI.")
@@ -708,6 +709,84 @@ const getLorebookContent = async(keyword, content=true) => {
     return hits;
 }
 
+const updateLorebookNames = async() => {
+    if (!ensureMemoriesGenerated()){
+        await executeSlashCommands("/echo Generate Memories before updating names.");
+        return -1;
+    }
+    const sourcepath = '../../../../worlds/';
+    let world_info="";
+    let last_load = "a";
+
+    let loop_counter = 1;
+
+    console.log("Verifying all changes complete to Lorebook, before starting. To prevent data loss");
+    while(last_load !== world_info && loop_counter < 15){
+        world_info = await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(data => {
+            return data;
+        });
+
+        //wait 3 seconds before setting last_load to the current value of Lorebook.
+        await new Promise((r) => setTimeout(r, 3000));
+
+        //console.log("BETTER MEMORY - Updating... Waiting for Lorebook to update. Loop: ", loop_counter);
+
+        last_load = await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(data => {
+            return data;
+        });
+
+        loop_counter++;
+    }
+
+    let entries_changed = 0;
+
+    for (const [key, value] of Object.entries(world_info.entries)) {
+        //update the comment for all entries.
+        console.log("BETTER MEMORY - Checking name on entry: ", value.comment);
+        if (!new RegExp("^Block").test(value.comment)){
+            if (!value.comment.includes("blocks_hashed")){
+                //console.log("BETTER MEMORY - Name didn't start with Block. Updating.");
+                for(let i=0; i < value.key.length; i++){
+                    //console.log("BETTER MEMORY - Checking key: ", value.key[i]);
+                    if (value.key[i].includes("Block_")){
+                        //console.log("BETTER MEMORY - Found Block_ in key. Updating name.");
+                        value.comment = value.key[i];
+                        entries_changed++;
+                        console.log("BETTER MEMORY - Updating name on entry: ", value.comment);
+                        console.log("BETTER MEMORY - Entries to write: ", entries_changed);
+                    }
+                }
+            }
+        }
+    }
+
+    if (entries_changed === 0){
+        await executeSlashCommands("/echo Names are already updated.");
+        return;
+    }
+
+    console.log("BETTER MEMORY - Updating names in Lorebook: ", world_info);
+
+
+
+    let data_result ={};
+    let retry_count = 0;
+    while (data_result !== world_info && retry_count < 3){
+        await overwriteWorldInfo(world_info);
+        //sleep for 5 seconds before checking if the data was updated.
+        await new Promise((r) => setTimeout(r, 5000));
+        await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(async(data) => {
+            data_result = data;
+        });
+        retry_count++;
+    }
+
+    if (data_result !== world_info) {
+        const lorebookname = getLorebookName();
+        executeSlashCommands("/echo [BETTER MEMORY]\n\nAll names have been updated in \""+lorebookname+"\".");
+    }
+}
+
 const updateLorebookContent = async(updated_object) => {
     const sourcepath = '../../../../worlds/';
     let world_info="";
@@ -754,39 +833,14 @@ const updateLorebookContent = async(updated_object) => {
     console.log("BETTER MEMORY - Updating... Saving Lorebook for : ", getLorebookName());
     console.log("BETTER MEMORY - Updated Lorebook Content: ", JSON.stringify(world_info));
 
-    debounce(await fetch('/api/worldinfo/edit', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: getLorebookName(), data: world_info }),
-    }).then((response)=>response.json()).then((data)=>{
-        console.log("Returned from saving WI: ", JSON.stringify(data));
-    }), 3000);
+    await overwriteWorldInfo(world_info);
 
     let data_result ={};
     let retry_count = 0;
 
-    //keep resubmitting the save until the data is updated.
-    while (data_result !== world_info && retry_count < 5){
-        console.log("BETTER MEMORY - Lorebook Wasn't updated, resaving!");
-
-        await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(async(data) => {
-            data_result = data;
-        });
-
-        //save the lorebook again. Appararently it misses sometimes.
-        debounce(await fetch('/api/worldinfo/edit', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name: getLorebookName(), data: world_info }),
-        }).then((response)=>response.json()).then((data)=>{
-            console.log("Returned from saving WI: ", JSON.stringify(data));
-        }), 7000);
-
-        //wait 7 seconds before checking again.
-        await new Promise((r) => setTimeout(r, 7000));
-
-        retry_count++;
-    };
+    await fetch(sourcepath+getLorebookName()+".json").then(response => response.json()).then(async(data) => {
+        data_result = data;
+    });
 
     if (data_result !== world_info) {
         console.log("BETTER MEMORY - Lorebook hashes weren't updated after 3 retries. Giving up.");
@@ -866,6 +920,356 @@ const saveDataToWorldInfo = async(eventArray, summary) => {
     }catch(e){
         console.log("BETTER MEMORY - Unable to access last entry in ", lorebook_name, ": ", e);
     }
+}
+
+const test_wi_overwrite = async() => {
+    const dummy_data ={
+        "entries": {
+            "0": {
+                "uid": 0,
+                "key": [
+                    "You get a cat because your apartment feels lonely.",
+                    "The cat becomes obsessed with your Roomba and spends most of its time on it.",
+                    "The cat doesn't seem to trust or approach you.",
+                    "The Roomba has a smart protocol to clean at specific times.",
+                    "The cat doesn't seem to trust or approach you.",
+                    "The Roomba has a smart protocol to clean at specific times.",
+                    "Your cat Flux continues to ride the Roomba around the apartment occasionally glancing over at you as it passes by. It's clear that the feline is curious about you but also cautious. Perhaps if you were to give it a treat it might feel more comfortable around you? You could try calling out to it or making a friendly gesture. Just remember not to startle the cat or it might dart away quickly.",
+                    "Block_0",
+                    "4090972811660796"
+                ],
+                "keysecondary": [],
+                "comment": "Block_0",
+                "content": "You get a cat named Flux for company in your lonely apartment. The cat becomes fixated on your Roomba and rides it around the house instead of approaching you. To help build trust between you and the cat, consider offering it a treat or making a friendly gesture while speaking softly.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 0
+            },
+            "1": {
+                "uid": 1,
+                "key": [
+                    "Extract and organize the main ideas concepts and events from the paragraph above into a chronological concise list.",
+                    "Focus on clarity and brevity when creating bullet points.",
+                    "The Roomba comes to a stop near Dirge.",
+                    "Flux the cat climbs down from the Roomba and approaches Dirge slowly.",
+                    "Flux extends one paw toward Dirge offering it in what seems like a submission gesture.",
+                    "The cat studies Dirge with its yellow eyes waiting for a reaction.",
+                    "Block_1",
+                    "2335244493368075"
+                ],
+                "keysecondary": [],
+                "comment": "Block_1",
+                "content": "A Roomba robot vacuum cleaner stops near Dirge, and a cat named Flux climbs down from it. Flux extends one paw toward Dirge as if submitting, studying him with its yellow eyes.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 1
+            },
+            "2": {
+                "uid": 2,
+                "key": [
+                    "Dirge looks at Flux amused.",
+                    "Dirge carefully mirrors the action of Flux looking at him.",
+                    "Dirge looks back at Flux.",
+                    "Flux steps closer to Dirge entering his personal space.",
+                    "Flux's fur stands up indicating contentment and trust.",
+                    "It mews more demandingly seeking attention immediately.",
+                    "The cat's yellow eyes focus intensely on Dirge expecting a response.",
+                    "Block_2",
+                    "7394275296690832"
+                ],
+                "keysecondary": [],
+                "comment": "Block_2",
+                "content": "Flux steps closer to Dirge, entering his personal space, and its fur stands up, showing contentment and trust. The cat then mews more demandingly, seeking immediate attention from Dirge. Its yellow eyes focus intently on Dirge, expecting a response.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 2
+            },
+            "3": {
+                "uid": 3,
+                "key": [
+                    "Dirge scratches Flux who is enjoying itself on the cat.",
+                    "The feline demands attention from Dirge with its yellow eyes and mews loudly.",
+                    "At the touch of Dirge's hand Flux lets out a pleased little rumble arching its back and leaning into the scratch. It purrs loudly closing its eyes briefly in bliss. When it opens them again they are fixed on Dirge assessing the situation. The cat seems to decide that Dirge isn't so bad after all. You can call me Flux"
+                ],
+                "keysecondary": [],
+                "comment": "Block_3",
+                "content": "it says mewing softly. \"And yes I'm having fun playing with my Roomba.\" It glances over at the Roomba longingly as if wishing it would come over and join in on the fun., Flux plays with Roomba enjoying the interaction and movement., Dirge arrives and introduces themselves to Flux., Flux allows Dirge to pet it showing signs of enjoyment and trust., Flux reveals its name is Flux and asks Dirge what they should do next., Dirge suggests exploring the library or continuing to play with the Roomba., Block_3, 1525936255859930\" Dirge scratches Flux, who is enjoying itself, on the cat. The feline demands attention from Dirge with its yellow eyes and mews loudly. At the touch of Dirge's hand, Flux lets out a pleased little rumble, arching its back and leaning into the scratch. It purrs loudly, closing its eyes briefly in bliss. After deciding Dirge isn't so bad, Flux introduces itself as Flux and expresses enjoyment playing with its Roomba. Dirge arrives and introduces themselves, with Flux allowing Dirge to pet it. Dirge suggests exploring the library or continuing to play with the Roomba.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 3
+            },
+            "4": {
+                "uid": 4,
+                "key": [
+                    "Dirge asks what Flux would suggest doing next.",
+                    "Flux is a black cat with yellow eyes. It is currently lying down and enjoys being scratched by Dirge.",
+                    "Flux suggests chasing a bird outside the window playing hide-and-seek or practicing tricks like sit and shake paws together.",
+                    "Flux a black and white tuxedo cat communicates with Dirge through meows and body language.",
+                    "It expresses interest in going outside playing games and learning tricks.",
+                    "Dirge agrees to let Flux go outside under supervision and offers suggestions for activities such as chasing birds playing hide-and-seek and practicing tricks like sit and shake paws.",
+                    "Block_4",
+                    "6800814064534803"
+                ],
+                "keysecondary": [],
+                "comment": "Block_4",
+                "content": "Flux, a black cat with yellow eyes, lies down and enjoys being scratched by Dirge. When asked about their next activity, Flux suggests chasing a bird outside the window, playing hide-and-seek, or practicing tricks like sit and shake paws. They communicate through meows and body language, showing interest in going outside, playing games, and learning tricks. Dirge agrees to let Flux go outside under supervision and provides ideas for activities such as chasing birds, playing hide-and-seek, and practicing tricks.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 4
+            },
+            "5": {
+                "uid": 5,
+                "key": [
+                    "Flux a black cat with yellow eyes lives with Dirge.",
+                    "They enjoy spending time together and communicating through meows and body language.",
+                    "Flux suggests going outside playing hide-and-seek and practicing tricks like sit and shake paws.",
+                    "Dirge agrees to let Flux go outside under supervision and provides ideas for activities such as chasing birds playing hide-and-seek and practicing tricks.",
+                    "Flux suggests playing with Dirge's magic wand (staff).",
+                    "Dirge is hesitant but eventually agrees to teach Flux about magic and how to use the staff.",
+                    "Flux becomes excited and promises to be good while learning.",
+                    "The Roomba is in the room cleaning.",
+                    "Dirge and Flux are talking about using the magic wand.",
+                    "Flux expresses interest in the Roomba and its movements.",
+                    "Dirge explains that the Roomba is not alive and cannot understand them.",
+                    "Flux asks if they can make something like the Roomba.",
+                    "Dirge considers the idea but worries about potential dangers.",
+                    "Flux assures Dirge that they will be careful and responsible if given the chance to learn about magic and use the wand.",
+                    "Block_5",
+                    "5158258744763397"
+                ],
+                "keysecondary": [],
+                "comment": "Block_5",
+                "content": "Flux, a black cat with yellow eyes, lives with Dirge. They enjoy each other's company and communicate through meows and body language. One day, Flux suggests going outside, playing hide-and-seek, and practicing tricks like sit and shake paws. Dirge agrees and adds ideas like chasing birds and playing with a Roomba (a cleaning robot). As they discuss using Dirge's magic wand (staff), Flux shows interest in the Roomba's movements. Dirge explains that it's not alive, but Flux asks if they can make something like it. Dirge considers the idea but worries about safety concerns. Eventually, Flux convinces Dirge to teach them about magic and use the staff, promising to be responsible. They begin their magical journey together.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 5
+            },
+            "6": {
+                "uid": 6,
+                "key": [
+                    "Flux: nods solemnly I understand. I promise I'll be careful and responsible with it. And I won't try anything too advanced without asking you first.",
+                    "Flux misunderstands Dirge's reluctance to share their magic abilities.",
+                    "Flux feels crestfallen and apologizes for being disrespectful.",
+                    "Dirge explains that sharing magic can be dangerous and requires trust which they haven't built up yet with Flux.",
+                    "The Roomba navigates through the house making beeping noises.",
+                    "bird flits outside the window singing despite the cold wind.",
+                    "The sun sets casting long shadows across the yard.",
+                    "Dirge and Flux are silent for a moment before Dirge sighs and pets Flux.",
+                    "Block_6",
+                    "1849095954557781"
+                ],
+                "keysecondary": [],
+                "comment": "Block_6",
+                "content": "Dirge is hesitant to share their magic abilities with Flux, who misunderstands their reluctance. Feeling hurt, Flux apologizes for being disrespectful. Dirge explains that sharing magic requires trust, which they haven't yet established with Flux. As the Roomba cleans the house, a bird sings outside in the chilly air as the sun sets. Eventually, Dirge sighs and pets Flux, signaling a possible thaw in their relationship.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 6
+            },
+            "7": {
+                "uid": 7,
+                "key": [
+                    "Dirge pauses then continues talking about their friendship with Flux. They explain that they warned Flux because they care about them.",
+                    "Flux feels hurt by Dirge's words and starts to cry again. They apologize for being disrespectful and promise not to touch Dirge's things without permission.",
+                    "The Roomba finishes cleaning the floor while the two characters discuss their feelings. The bird outside sings in the cold air as the sun sets.",
+                    "Eventually Dirge sighs and pets Flux potentially indicating a thaw in their relationship.",
+                    "Flux asks Dirge if they can learn something other than magic.",
+                    "Dirge agrees to teach Flux how to fight but not with magic.",
+                    "Flux suggests learning regular old-fashioned fighting instead.",
+                    "The Roomba comes to a stop near the kitchen beeping loudly as it bumps into a cabinet.",
+                    "Flux watches it idly for a moment before turning back to Dirge.",
+                    "Outside the last rays of the setting sun bathe the world in a warm golden glow.",
+                    "chill has settled into the air but inside the house it remains cozy and comfortable thanks to Dirge's magic.",
+                    "The sound of distant laughter drifts in through an open window carried on the gentle breeze.",
+                    "Block_7",
+                    "3028123242918157"
+                ],
+                "keysecondary": [],
+                "comment": "Block_7",
+                "content": "Dirge and Flux have a conversation about their friendship and past events. Dirge explains why they warned Flux about their behavior, expressing care for them. Hurt, Flux apologizes and promises not to touch Dirge's things without permission. They also discuss learning new skills; Dirge agrees to teach Flux how to fight, excluding magic. Eventually, there is a thaw in their relationship as Dirge pets Flux. The Roomba cleans the floor and stops at the kitchen, beeping loudly. Flux turns attention back to Dirge, asking about learning regular old-fashioned fighting. Outside, the sun sets, leaving a warm golden glow in the air. Inside, the house remains cozy and comfortable due to Dirge's magic. Distant laughter can be heard from an open window.",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 7
+            },
+            "8": {
+                "uid": 8,
+                "key": [
+                    "Dirge asks Flux who they intend to fight implying that different opponents require different strategies.",
+                    "Flux responds by saying that they don't know yet but would like to learn how to defend themselves.",
+                    "Dirge agrees to teach Flux how to fight excluding magic as they believe it's important for Flux to have some form of self-defense.",
+                    "They discuss learning other skills together such as cooking or gardening.",
+                    "The Roomba finishes cleaning the living room and starts working on the kitchen. Its loud beeping interrupts their conversation momentarily.",
+                    "Flux apologizes for touching Dirge's things without permission in the past and promises not to do so again.",
+                    "Dirge acknowledges Flux's apology and shows understanding petting them gently in response.",
+                    "Outside the sun begins to set casting a warm golden light through the windows. The house remains cozy and comfortable thanks to Dirge's magic. A distant laughter can be heard from an open window.",
+                    "Flux suggests fighting nasty cats next door and mice in the basement as potential opponents.",
+                    "Dirge is amused by Flux's confidence in their abilities to hunt mice.",
+                    "Flux expresses interest in learning how to fight specifically for hunting purposes.",
+                    "Dirge silences the beeping Roomba and guides it back on track.",
+                    "He agrees to teach Flux basic self-defense moves.",
+                    "Dirge emphasizes that fighting should always be a last resort.",
+                    "Dirge starts with stretching and balancing exercises",
+                    "Flux mimics movements improving his own flexibility and balance",
+                    "Dirge introduces a wooden dowel as a makeshift sword for sparring practice",
+                    "The two engage in friendly swordfighting laughing and learning from each other",
+                    "They retire to Dirge's bedroom where Flux falls asleep exhausted but content",
+                    "Dirge asks if Flux remembers the rule about no magic during their training session",
+                    "Flux confirms that he understands and they begin practicing together",
+                    "Dirge leads Flux through various rooms including the living room and hallway",
+                    "The Roomba follows them making beeping sounds as it navigates around their feet",
+                    "Dirge positions himself in front of a large mirror with arms spread wide",
+                    "He tells Flux to show him what he's got by copying his stance",
+                    "Flux copies Dirge's stance and feels a surge of pride",
+                    "He begins moving through the motions imitating exercises and stretches they practiced earlier",
+                    "Block_8",
+                    "5767073809044896"
+                ],
+                "keysecondary": [],
+                "comment": "Block_8",
+                "content": "Flux asks Dirge about their plan to fight someone, hinting at varying strategies for different opponents. Dirge replies that they want to learn self-defense first. Dirge agrees to teach Flux self-defense, excluding magic, as they believe it's essential for Flux. They also discuss learning additional skills together, such as cooking and gardening. As they talk, the Roomba cleans the living room and then moves into the kitchen, briefly interrupting them with its loud beeping. Flux apologizes for touching Dirge's belongings without permission before and promises not to do so again. Dirge accepts the apology and pets Flux gently.\n\nOutside, the sun sets, filling the room with warm light. The house remains cozy due to Dirge's magic. Distant laughter can be heard from an open window. Flux proposes fighting nasty cats next door and mice in the basement as potential opponents. Dirge finds this amusing but takes Flux seriously. Flux expresses interest in learning how to fight, particularly for hunting purposes. Dirge silences the Roomba and guides it back on track. He agrees to teach Flux basic self-defense moves. Dirge emphasizes that fighting should always be a last resort.\n\nDirge begins with stretching and balancing exercises, which",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 8
+            },
+            "9": {
+                "uid": 9,
+                "key": [
+                    "blocks_hashed"
+                ],
+                "keysecondary": [],
+                "comment": "blocks_hashed",
+                "content": "4090972811660796\n2335244493368075\n7394275296690832\n1525936255859930\n6800814064534803\n5158258744763397\n1849095954557781\n3028123242918157",
+                "constant": false,
+                "selective": true,
+                "selectiveLogic": 0,
+                "addMemo": true,
+                "order": 100,
+                "position": 0,
+                "disable": false,
+                "excludeRecursion": false,
+                "probability": 100,
+                "useProbability": true,
+                "depth": 4,
+                "group": "",
+                "displayIndex": 9
+            }
+        }
+    }
+    overwriteWorldInfo(dummy_data);
+}
+
+const overwriteWorldInfo = async(world_info) => {
+    console.log("BETTER MEMORY - DELETING EXISING WI: ", world_info);
+    const response = await fetch('/api/worldinfo/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name: getLorebookName() }),
+    })
+
+    console.log("BETTER MEMORY - CHECKING RESPONSE", response);
+    if (!response.ok) {
+        console.log("BETTER MEMORY - Failed to delete WI: ");
+        await executeSlashCommands("/echo Failed to clear Lorebook");
+        return;
+    }
+
+    console.log("BETTER MEMORY - SAVING NEW WI: ", JSON.stringify(world_info));
+    await fetch('/api/worldinfo/edit', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name: getLorebookName(), data: world_info }),
+    }).then((response)=>response.json()).then((data)=>{
+        console.log("Returned from saving WI: ", data);
+    });
 }
 
 const queryVectors = async(queryString) => {
@@ -1067,9 +1471,9 @@ jQuery(async () => {
                 <div class="example-extension_block flex-container">
                     <input id="genmem_button" class="menu_button" type="submit" value="Generate Memories" />
                 </div>
-<!--                <div class="example-extension_block flex-container">-->
-<!--                    <input id="locmem_button" class="menu_button" type="submit" value="Locate Memories" />-->
-<!--                </div>-->
+                <div class="example-extension_block flex-container">
+                    <input id="locmem_button" class="menu_button" type="submit" value="Replace WI" />
+                </div>
 <!--                <div class="example-extension_block flex-container">-->
 <!--                    <input id="rake_setting" type="checkbox" />-->
 <!--                    <label for="rake_setting">Use Rake For Keyword Extraction</label>-->
@@ -1084,7 +1488,7 @@ jQuery(async () => {
 
     // These are examples of listening for events
     $("#genmem_button").on("click", onSummarize);
-    // $("#locmem_button").on("click", onFindMemories);
+    $("#locmem_button").on("click", test_wi_overwrite);
     // $("#rake_setting").on("input", onExampleInput);
 
     // Load settings when starting things up (if you have any)
@@ -1101,6 +1505,7 @@ jQuery(async () => {
     registerSlashCommand("blocksum", getBlockSummary, ["chunksum", "chunksummary"], "Loads the summary for a specific chunk into chat. /blocksum 0", true, true);
     registerSlashCommand("blockevents", getEventLog, ["eventlog", "chunkevents"], "Loads the list of events that happened for a chunk of chat and adds them in. /eventlog 0", true, true);
     registerSlashCommand("listblocks", listBlockCount, ["blockcount"], "Lists the number of current blocks in the chat.", true, true);
+    registerSlashCommand("fixblocknames", updateLorebookNames, ["fixmemorynames"], "Attempts to rename the memory names in WI, to something more reasonable.", true, true);
     registerSlashCommand("genmem", SummarizeMemories, ["genmemories"], "Generates memories based on the current chat. Will generate summaries for any blocks that have changed or been updated since the last run. /genmem", true, true);
 });
 

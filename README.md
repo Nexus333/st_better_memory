@@ -62,11 +62,13 @@ For example, if you were writing a combat scene, and it searched through relevan
 2. Select an existing chat. This summaries in chunks of User / Responses. So if you don't have any data or little data, it's probably going to do something dumb. I haven't really tested it on small datasets. 
 3. Click the "Generate Memories" button.
 4. Wait for it to finish. (This can take a while.)
-5. When you want to trigger a summary, run the slash command `/findmem {Normal character chat}`,  where prompt is the prompt you want to generate a response for. i.e. `/findmem Remember that time we were chased by a dragon?` (only one that requires LVAK. Manual triggers work like normal.)
+5. When you want to trigger a summary, run the slash command `/findevents {Normal character chat}`,  where prompt is the prompt you want to generate a response for. i.e. `/findmem Remember that time we were chased by a dragon?` (requires LVAK. Manual triggers work like normal.)
+6. When you want to check all summaries for a hit, run the slash command `/allmem {Normal character chat}`,  where prompt is the prompt you want to generate a response for. i.e. `/allmem Remember that time we were chased by a dragon?` (only one that requires LVAK. Manual triggers work like normal.)
 6. You can trigger memories directly by listing the block number using `/blocksum {block number}`. i.e. `/blocksum 1`
 7. You can trigger the event log for a given block number using `/eventlog {block number}`. i.e. `/eventlog 1`
 8. You can trigger the last summary it generated that it finds using `/lastsum`.
 8. You can see the number of blocks that exist in the chat (not what's been generated) using `/blockcount`
+9. You can try to fix the names in entries if they are off, by running `/fixblocknames`. This will attempt to fix the names in the entries, but it's not perfect, so you may have to do some manual cleanup.
 9. You can run `/genmem` from the prompt to generate any new memories. If this is the first time, it will get all memories in the chat. Note: This will block generation until it's finished, but it lets ou know where progress is at.
 7. Profit???
 
