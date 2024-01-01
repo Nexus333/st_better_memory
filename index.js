@@ -194,7 +194,7 @@ const onFindMemories = async(_, input) => {
         await executeSlashCommands("/echo Generate Memories before searching.");
         return -1;
     }
-
+    await purgeVectorIndex();
     console.log("BETTER MEMORY - Finding Memories for Message: ", input);
     let resp = await onLocateMemories(input);
     console.log("BETTER MEMORY - Found Memories: ", resp[0].content);
@@ -354,6 +354,51 @@ const onLocateMemories = async(msgPrompt) => {
     }
     console.log("BETTER MEMORY - Memory Selected: ", resultString);
     return resultString;
+}
+
+const onLocateSummary = async(_, input) => {
+    if (ensureMemoriesGenerated() === false){
+        await executeSlashCommands("/echo Generate Memories before searching.");
+        return -1;
+    }
+
+    await purgeVectorIndex();
+
+    let summary_hits = [];
+
+    let resultString = "";
+
+    await getLorebookContent("Block_", true).then(async(data) => {
+        console.log(JSON.stringify(data))
+        if (data !== undefined) {
+            if (data.length > 0) {
+                for (let i = 0; i < data.length; i++) {
+                    summary_hits.push(data[i].content);
+                }
+            }
+        }
+    });
+
+    if (summary_hits.length < 1){
+        await executeSlashCommands("/echo No Memories Found.");
+        return;
+    }
+
+    console.log("BETTER MEMORY - Inserting Summaries: ", summary_hits);
+
+    await insertKeyPhrases(summary_hits).then(async() => {
+        await queryVectors(input).then(async(data) => {
+            console.log("BETTER MEMORY - Selected Summary: ", data["chroma_resp"]);
+            console.log("BETTER MEMORY - Query Results Type: ", typeof data["chroma_resp"]);
+            let llm_results =data["chroma_resp"];
+            console.log("BETTER MEMORY - Best Match: ", llm_results);
+            resultString = llm_results["documents"][0];
+        })
+    });
+
+    await executeSlashCommands("/send "+input);
+    await executeSlashCommands("/sys [Memory Recalled: "+resultString+"]");
+    await executeSlashCommands("/trigger");
 }
 
 const generateKeywordsFromLLM = async(message, proposedKeywordsArray=[], removeCharacterNames=true) => {
@@ -905,11 +950,9 @@ async function purgeVectorIndex() {
         }
 
         console.log(`Vectors: Purged vector index for collection ${getLorebookName()}`);
-
     } catch (error) {
         console.error('Vectors: Failed to purge', error);
     }
-    console.log("BETTER MEMORY - Purge Vector DB Completed with result: ", JSON.stringify(response.json()));
 }
 
 //Placemarker for future functionality. This currently isn't exposed. Has to be deleted manually through the UI.
@@ -1052,7 +1095,8 @@ jQuery(async () => {
     // eventSource.on(event_types.MESSAGE_SWIPED, onNewMessageGenerated);
 
     //slash commands
-    registerSlashCommand("findmemory", onFindMemories, ["findmem", "getmem"], "Finds a memory based on the input that the user submits, and loads the summary into chat. Requires LVAK. /findmem (normal prompt)", true, true);
+    registerSlashCommand("eventmem", onFindMemories, ["eventtrigger", "getevent"], "Finds a memory based on the input that the user submits, and loads the summary into chat. Requires LVAK. /eventmem (normal prompt)", true, true);
+    registerSlashCommand("allmem", onLocateSummary, ["searchmem", "allmemories", "searchmemories"], "Queries all generated memories for the most accurate response. Requires LVAK. /allmem (normal prompt)", true, true);
     registerSlashCommand("lastsummary", postLastSummary, ["lastsum"], "Finds the latest summary and adds it into chat. /lastsum", true, true);
     registerSlashCommand("blocksum", getBlockSummary, ["chunksum", "chunksummary"], "Loads the summary for a specific chunk into chat. /blocksum 0", true, true);
     registerSlashCommand("blockevents", getEventLog, ["eventlog", "chunkevents"], "Loads the list of events that happened for a chunk of chat and adds them in. /eventlog 0", true, true);
